@@ -83,6 +83,23 @@ struct ip6_t {
   unsigned long long  dst_lo;
 } BPF_PACKET_HEADER;
 
+struct in6_addr {
+  unsigned long long  hi;
+  unsigned long long  lo;
+} BPF_PACKET_HEADER;
+
+struct ip6_srh_t {
+  unsigned char nexthdr;
+  unsigned char hdrlen;
+  unsigned char type;
+  unsigned char segments_left;
+  unsigned char first_segment;
+  unsigned char flags;
+  unsigned short tag;
+	
+  struct in6_addr segments[0];
+} BPF_PACKET_HEADER;
+
 struct ip6_opt_t {
   unsigned char  next_header;
   unsigned char  ext_len;

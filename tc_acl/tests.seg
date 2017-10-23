@@ -1,8 +1,9 @@
 # Test suite for simple tc ACL with SRv6
-# Packets with tag 42 or last segment fc00::1337 are dropped
+
+`rm /sys/fs/bpf/tc/globals/map_acl` # Resetting the map with the blacklist
 
 `tc qdisc add dev tun0 clsact`
-`tc filter add dev tun0 ingress bpf da obj acl.o sec cls`
+`tc filter add dev tun0 ingress bpf da obj acl_bpf.o sec cls`
 
 > fc00::1 -> fc00::42
 < fc00::1 -> fc00::42
@@ -11,7 +12,30 @@
 < fc00::2 -> fc00::14 / [+fc00::14,fd00::42] <tag 71>
 
 > fc00::2 -> fd00::42 / [fc00::14,+fd00::42] <tag 42>
+< fc00::2 -> fc00::14 / [+fc00::14,fd00::42] <tag 42>
+
+> fc00::2 -> fd00::42 / [fc00::1337,+fd00::42] <tag 2>
+< fc00::2 -> fc00::1337 / [+fc00::1337,fd00::42] <tag 2>
+
+`./acl_drop tag 42`
+
+> fc00::2 -> fd00::42 / [fc00::14,+fd00::42] <tag 42>
 < none
 
-> fc00::2 -> fd00::42 / [fc00::1337,+fd00::42]
+> fc00::2 -> fd00::42 / [fc00::1337,+fd00::42] <tag 2>
+< fc00::2 -> fc00::1337 / [+fc00::1337,fd00::42] <tag 2>
+
+`./acl_drop seg fc00::1337`
+
+> fc00::2 -> fd00::42 / [fc00::1337,+fd00::42] <tag 2>
 < none
+
+`./acl_drop seg fc00::beef`
+`./acl_drop tag 2`
+
+> fc00::2 -> fd00::42 / [fc00::14,+fd00::42] <tag 42>
+< fc00::2 -> fc00::14 / [+fc00::14,fd00::42] <tag 42>
+
+> fc00::2 -> fd00::42 / [fc00::1337,+fd00::42] <tag 2>
+< none
+
