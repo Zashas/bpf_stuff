@@ -1,0 +1,40 @@
+# Test suite for simple LWT BPF ACL with SRv6
+
+`rm /sys/fs/bpf/ip/globals/map_acl` # Resetting the map with the blacklist
+
+`sudo ip -6 route add fb00::/16 encap bpf in obj acl_bpf.o section lwt_acl dev dum0`
+
+> fb00::1 -> fb00::42
+< fb00::1 -> fb00::42
+
+> fb00::2 -> fd00::42 / [fb00::14,+fd00::42] <tag 71>
+< fb00::2 -> fb00::14 / [+fb00::14,fd00::42] <tag 71>
+
+> fb00::2 -> fd00::42 / [fb00::14,+fd00::42] <tag 42>
+< fb00::2 -> fb00::14 / [+fb00::14,fd00::42] <tag 42>
+
+> fb00::2 -> fd00::42 / [fb00::1337,+fd00::42] <tag 2>
+< fb00::2 -> fb00::1337 / [+fb00::1337,fd00::42] <tag 2>
+
+`./acl_drop tag 42`
+
+> fb00::2 -> fd00::42 / [fb00::14,+fd00::42] <tag 42>
+< none
+
+> fb00::2 -> fd00::42 / [fb00::1337,+fd00::42] <tag 2>
+< fb00::2 -> fb00::1337 / [+fb00::1337,fd00::42] <tag 2>
+
+`./acl_drop seg fb00::1337`
+
+> fb00::2 -> fd00::42 / [fb00::1337,+fd00::42] <tag 2>
+< none
+
+`./acl_drop seg fb00::beef`
+`./acl_drop tag 2`
+
+> fb00::2 -> fd00::42 / [fb00::14,+fd00::42] <tag 42>
+< fb00::2 -> fb00::14 / [+fb00::14,fd00::42] <tag 42>
+
+> fb00::2 -> fd00::42 / [fb00::1337,+fd00::42] <tag 2>
+< none
+
