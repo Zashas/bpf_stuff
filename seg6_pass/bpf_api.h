@@ -11,7 +11,8 @@
 #include <stdint.h>
 
 #include <linux/pkt_cls.h>
-#include <linux/bpf.h>
+//#include <linux/bpf.h>
+#include "bpf.h"
 #include <linux/filter.h>
 
 #include <asm/byteorder.h>
@@ -224,6 +225,10 @@ static int BPF_FUNC(skb_get_tunnel_opt, struct __sk_buff *skb,
 		    void *to, uint32_t size);
 static int BPF_FUNC(skb_set_tunnel_opt, struct __sk_buff *skb,
 		    const void *from, uint32_t size);
+
+static int BPF_FUNC(seg6_change_field, struct __sk_buff *skb,
+		    uint8_t field, uint32_t value);
+
 
 /** LLVM built-ins, mem*() routines work for constant size */
 
