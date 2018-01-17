@@ -12,7 +12,7 @@
 #define cursor_advance(_cursor, _len) \
   ({ void *_tmp = _cursor; _cursor += _len; _tmp; })
 
-struct ip6_srh_t *get_srh(struct __sk_buff *skb) {
+inline __attribute__((always_inline)) struct ip6_srh_t *get_srh(struct __sk_buff *skb) {
     uint8_t *ipver;
     void *data_end = (void *)(long)skb->data_end;
     void *cursor   = (void *)(long)skb->data;
@@ -62,7 +62,7 @@ int do_inc(struct __sk_buff *skb) {
 
     uint16_t tag = ntohs(srh->tag);
     tag = htons(tag+1);
-    seg6_change_field(skb, SEG6_TAG, (uint32_t) tag);
+    skb_seg6_change_field(skb, SEG6_TAG, (uint32_t) tag);
     return BPF_OK;
 }
 
@@ -72,10 +72,52 @@ int do_alert(struct __sk_buff *skb) {
     if (srh == NULL)
         return BPF_DROP;
 
-    seg6_change_field(skb, SEG6_FLAGS, (uint32_t) srh->flags | SEG6_FLAG_ALERT);
+    skb_seg6_change_field(skb, SEG6_FLAGS, (uint32_t) srh->flags | SEG6_FLAG_ALERT);
     return BPF_OK;
 }
 
+__section("end_x")
+int do_end_x(struct __sk_buff *skb) {
+    struct in6_addr addr;
+    unsigned long long hi = 0xfc42000000000000;
+    unsigned long long lo = 0x1;
+    addr.lo = htonll(lo);
+    addr.hi = htonll(hi);
+    skb_seg6_action_end_x(skb, &addr); // End.X to fc00::14
+    return BPF_REDIRECT;
+}
+
+__section("end_t")
+int do_end_t(struct __sk_buff *skb) {
+    skb_seg6_action_end_t(skb, 42);
+    return BPF_REDIRECT;
+}
+
+__section("end_b6")
+int do_end_b6(struct __sk_buff *skb) {
+    char srh_buf[40]; // room for two segments
+    struct ip6_srh_t *srh = (struct ip6_srh_t *)srh_buf;
+    srh->hdrlen = 4;
+    srh->type = 4;
+    srh->segments_left = 1;
+    srh->first_segment = 1;
+    srh->flags = 0;
+    srh->tag = 0;
+
+    struct in6_addr *seg0 = (struct in6_addr *)((char*) srh + sizeof(*srh));
+    struct in6_addr *seg1 = (struct in6_addr *)((char*) seg0 + sizeof(*seg1));
+    unsigned long long hi = 0xfc00000000000000;
+    unsigned long long lo = 0x1;
+    seg0->lo = htonll(lo);
+    seg0->hi = htonll(hi);
+
+    seg1->hi = seg0->hi;
+    lo = 0x2;
+    seg1->lo = htonll(lo);
+
+    skb_seg6_action_end_b6(skb, srh); // End.X to fc00::14
+    return BPF_REDIRECT;
+}
 
 
 char __license[] __section("license") = "GPL";

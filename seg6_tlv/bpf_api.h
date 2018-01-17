@@ -13,12 +13,12 @@
 #include <linux/pkt_cls.h>
 //#include <linux/bpf.h>
 #include "bpf.h"
+#include "proto.h"
 #include <linux/filter.h>
 
 #include <asm/byteorder.h>
 
 #include "bpf_elf.h"
-#include "proto.h"
 
 /** Misc macros. */
 
@@ -227,12 +227,15 @@ static int BPF_FUNC(skb_get_tunnel_opt, struct __sk_buff *skb,
 static int BPF_FUNC(skb_set_tunnel_opt, struct __sk_buff *skb,
 		    const void *from, uint32_t size);
 
+/* SEG6 helpers */
 static int BPF_FUNC(skb_seg6_change_field, struct __sk_buff *skb,
 		    uint8_t field, uint32_t value);
 
-static int BPF_FUNC(skb_seg6_action_end_x, struct __sk_buff *skb, struct in6_addr *nhaddr);
-static int BPF_FUNC(skb_seg6_action_end_t, struct __sk_buff *skb, uint32_t tbl_id);
-static int BPF_FUNC(skb_seg6_action_end_b6, struct __sk_buff *skb, struct ip6_srh_t *srh);
+static int BPF_FUNC(skb_seg6_add_tlv, struct __sk_buff *skb, uint32_t tlv_offset,
+        struct sr6_tlv *itlv);
+
+static int BPF_FUNC(skb_seg6_delete_tlv, struct __sk_buff *skb, uint32_t tlv_offset);
+
 
 
 /** LLVM built-ins, mem*() routines work for constant size */

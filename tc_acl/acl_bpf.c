@@ -69,9 +69,10 @@ int acl(struct __sk_buff *skb) {
             goto DROP;
     }
     else {
-        goto EOP;
+        goto IP; // a formal if/else is needed by eBPF filter's verifier
     }
 
+IP:
     if (ADDR_LOW_DROP && ADDR_HIGH_DROP) {
         if (seg->lo == *ADDR_LOW_DROP && seg->hi == *ADDR_HIGH_DROP)
             goto DROP;
@@ -94,7 +95,7 @@ char __license[] __section("license") = "GPL";
 	__u32 pkt_type;
 	__u32 mark;
 	__u32 queue_mapping;
-	__u32 protocol;
+	__u32 protocol; -- ETH_P_*' values defined in the 'linux/if_ether.h' - 0xdd86 = IPv6
 	__u32 vlan_present;
 	__u32 vlan_tci;
 	__u32 vlan_proto;
@@ -105,7 +106,7 @@ char __license[] __section("license") = "GPL";
 	__u32 cb[5];
 	__u32 hash;
 	__u32 tc_classid;
-	__u32 data;
+	__u32 data; // Pointer to data, region is read-only
 	__u32 data_end;
 	__u32 napi_id;
 };

@@ -751,10 +751,7 @@ union bpf_attr {
 	FN(override_return),    \
 	FN(skb_seg6_change_field),  \
 	FN(skb_seg6_add_tlv),   \
-	FN(skb_seg6_delete_tlv),	\
-	FN(skb_seg6_action_end_x),	\
-	FN(skb_seg6_action_end_t),	\
-	FN(skb_seg6_action_end_b6),
+	FN(skb_seg6_delete_tlv),
 
 /* integer value in 'imm' field of BPF_CALL instruction selects which helper
  * function eBPF program intends to call
