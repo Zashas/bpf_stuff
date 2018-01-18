@@ -6,6 +6,7 @@
 `/home/math/shared/iproute2/ip/ip -6 route add fd00::6 encap seg6local action bpf obj tlv_bpf.o section add_wrong_offset dev dum0`
 `/home/math/shared/iproute2/ip/ip -6 route add fd00::7 encap seg6local action bpf obj tlv_bpf.o section add_6 dev dum0`
 `/home/math/shared/iproute2/ip/ip -6 route add fd00::8 encap seg6local action bpf obj tlv_bpf.o section add_ingr_mid dev dum0`
+`/home/math/shared/iproute2/ip/ip -6 route add fd00::9 encap seg6local action bpf obj tlv_bpf.o section add_hmac dev dum0`
 
 # Regular IP packets without SRH should be dropped by the seg6local encap
 > fc00::1 -> fd00::1
@@ -40,7 +41,6 @@
 > fc00::2 -> fd00::7 / [fc00::14,+fd00::7]
 < fc00::2 -> fc00::14 / [+fc00::14,fd00::7] {NSH: 010203} {Pad: 1}
 
-
 # Add an Opaq TLV as first TLV
 > fc00::2 -> fd00::4 / [fc00::14,+fd00::4]
 < fc00::2 -> fc00::14 / [+fc00::14,fd00::4] {Opaq: 00000000000000000000000000000042} {Pad: 2}
@@ -50,3 +50,19 @@
 
 > fc00::2 -> fd00::4 / [fc00::14,+fd00::4] {Opaq: 00000000000000000000000000000042} {Egr: fc00::dead} 
 < fc00::2 -> fc00::14 / [+fc00::14,fd00::4] {Opaq: 00000000000000000000000000000042} {Opaq: 00000000000000000000000000000042} {Egr: fc00::dead} {Pad: 2}
+
+# Add a HMAC TLV
+# Set the key 'foobar' for keyid 1042
+`/usr/bin/expect -c 'spawn ip sr hmac set 1042 sha256; expect "(blank to delete): "; send "foobar\r\n"; interact'`
+
+> fc00::2 -> fd00::9 / [fc00::1,fc00::beef,+fd00::9] / UDP(13,37) / "Lorem ipsum"
+< fc00::2 -> fc00::beef / [fc00::1,+fc00::beef,fd00::9] <fl H> {HMAC: 1042, f9acfcbea35cb985694b42c12a48f1f12bb601525a749e8084122d18f447a406} / UDP(13,37) / "Lorem ipsum"
+
+# Veryifing that the computed HMAC is valid (otherwise would be dropped)
+`ip -6 addr add fc00::beef dev lo`
+> fc00::2 -> fc00::beef / [fc00::1,+fc00::beef,fd00::9] <fl H> {HMAC: 1042, f9acfcbea35cb985694b42c12a48f1f12bb601525a749e8084122d18f447a406} / UDP(13,37) / "Lorem ipsum"
+< fc00::2 -> fc00::1 / [+fc00::1,fc00::beef,fd00::9] <fl H> {HMAC: 1042, f9acfcbea35cb985694b42c12a48f1f12bb601525a749e8084122d18f447a406} / UDP(13,37) / "Lorem ipsum"
+
+# Add a HMAC, while there's already one
+> fc00::2 -> fd00::9 / [fc00::1,fc00::beef,+fd00::9] <fl H> {HMAC: 1042, f9acfcbea35cb985694b42c12a48f1f12bb601525a749e8084122d18f447a406} / UDP(13,37) / "Lorem ipsum"
+< none

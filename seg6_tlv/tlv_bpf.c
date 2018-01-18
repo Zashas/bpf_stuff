@@ -27,6 +27,13 @@ struct sr6_tlv_128 {
     unsigned char data[16];
 } BPF_PACKET_HEADER;
 
+struct sr6_tlv_hmac {
+    unsigned char type;
+    unsigned char len;
+    unsigned short reserved;
+    unsigned int keyid;
+    unsigned char hmac[32];
+} BPF_PACKET_HEADER;
 
 struct ip6_srh_t *get_srh(struct __sk_buff *skb) {
     uint8_t *ipver;
@@ -199,7 +206,6 @@ int do_add_ingr_wrong_offset(struct __sk_buff *skb) {
     return BPF_DROP;
 }
 
-
 __section("add_opaq_begin")
 int do_add_opaq_begin(struct __sk_buff *skb) {
     struct ip6_srh_t *srh = get_srh(skb);
@@ -215,6 +221,36 @@ int do_add_opaq_begin(struct __sk_buff *skb) {
     tlv.data[15] = 0x42;
     int ret = skb_seg6_add_tlv(skb, 8+(srh->first_segment+1)*16, (struct sr6_tlv *)&tlv);
 
+    if (ret == 0)
+        return BPF_OK;
+    return BPF_DROP;
+}
+
+#define SEG6_FLAGS 0
+#define SEG6_FLAG_HMAC		(1 << 3)
+
+__section("add_hmac")
+int do_add_hmac(struct __sk_buff *skb) {
+    struct ip6_srh_t *srh = get_srh(skb);
+    if (srh == NULL)
+        return BPF_DROP;
+
+    int ret = skb_seg6_change_field(skb, SEG6_FLAGS, srh->flags | SEG6_FLAG_HMAC);
+    printt("flags: %d\n", srh->flags);
+    if (ret != 0)
+        return BPF_DROP;
+
+    printt("packet going through hmac");
+    struct sr6_tlv_hmac tlv;
+    tlv.type = 5;
+    tlv.len = 38;
+    tlv.reserved = 0;
+    tlv.keyid = htonl(1042);
+    memset(tlv.hmac, 0, 32);
+    //int ret = skb_seg6_add_tlv(skb, 8+(srh->first_segment+1)*16, (struct sr6_tlv *)&tlv);
+    ret = skb_seg6_add_tlv(skb, 0, (struct sr6_tlv *)&tlv);
+
+    printt("ret=%d", ret);
     if (ret == 0)
         return BPF_OK;
     return BPF_DROP;
