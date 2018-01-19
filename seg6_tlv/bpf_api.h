@@ -234,7 +234,7 @@ static int BPF_FUNC(skb_seg6_change_field, struct __sk_buff *skb,
 static int BPF_FUNC(skb_seg6_add_tlv, struct __sk_buff *skb, uint32_t tlv_offset,
         struct sr6_tlv *itlv);
 
-static int BPF_FUNC(skb_seg6_delete_tlv, struct __sk_buff *skb, uint32_t tlv_offset);
+static int BPF_FUNC(skb_seg6_delete_tlv, struct __sk_buff *skb, struct sr6_tlv *tlv);
 
 
 

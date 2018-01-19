@@ -107,7 +107,7 @@ int do_add_6(struct __sk_buff *skb) {
 
     struct sr6_tlv_nsh tlv;
     tlv.type = 6; // NSH
-    tlv.len = 3;
+    tlv.len = 4;
     tlv.flags = 0;
     tlv.data[0] = 1;
     tlv.data[1] = 2;
@@ -236,26 +236,72 @@ int do_add_hmac(struct __sk_buff *skb) {
         return BPF_DROP;
 
     int ret = skb_seg6_change_field(skb, SEG6_FLAGS, srh->flags | SEG6_FLAG_HMAC);
-    printt("flags: %d\n", srh->flags);
     if (ret != 0)
         return BPF_DROP;
 
-    printt("packet going through hmac");
     struct sr6_tlv_hmac tlv;
     tlv.type = 5;
     tlv.len = 38;
     tlv.reserved = 0;
     tlv.keyid = htonl(1042);
     memset(tlv.hmac, 0, 32);
-    //int ret = skb_seg6_add_tlv(skb, 8+(srh->first_segment+1)*16, (struct sr6_tlv *)&tlv);
     ret = skb_seg6_add_tlv(skb, 0, (struct sr6_tlv *)&tlv);
 
-    printt("ret=%d", ret);
     if (ret == 0)
         return BPF_OK;
     return BPF_DROP;
 }
 
+__section("del_first")
+int do_del_first(struct __sk_buff *skb) {
+    struct ip6_srh_t *srh = get_srh(skb);
+    void *data_end = (void *)(long)skb->data_end;
+    if (srh == NULL)
+        return BPF_DROP;
+
+    struct sr6_tlv *tlv = (struct sr6_tlv *)((char *)srh+8+(srh->first_segment+1)*16);
+    if ((void *)tlv > data_end) // Check needed otherwise filter not accepted by the kernel
+        return BPF_OK;
+
+    int ret = skb_seg6_delete_tlv(skb, tlv);
+    if (ret == 0)
+        return BPF_OK;
+    return BPF_DROP;
+}
+
+__section("del_20")
+int do_del_20(struct __sk_buff *skb) {
+    struct ip6_srh_t *srh = get_srh(skb);
+    void *data_end = (void *)(long)skb->data_end;
+    if (srh == NULL)
+        return BPF_DROP;
+
+    struct sr6_tlv *tlv = (struct sr6_tlv *)((char *)srh+8+(srh->first_segment+1)*16+20);
+    if ((void *)tlv > data_end) // Check needed otherwise filter not accepted by the kernel
+        return BPF_OK;
+
+    int ret = skb_seg6_delete_tlv(skb, tlv);
+    if (ret == 0)
+        return BPF_OK;
+    return BPF_DROP;
+}
+
+__section("del_24")
+int do_del_24(struct __sk_buff *skb) {
+    struct ip6_srh_t *srh = get_srh(skb);
+    void *data_end = (void *)(long)skb->data_end;
+    if (srh == NULL)
+        return BPF_DROP;
+
+    struct sr6_tlv *tlv = (struct sr6_tlv *)((char *)srh+8+(srh->first_segment+1)*16+24);
+    if ((void *)tlv > data_end) // Check needed otherwise filter not accepted by the kernel
+        return BPF_OK;
+
+    int ret = skb_seg6_delete_tlv(skb, tlv);
+    if (ret == 0)
+        return BPF_OK;
+    return BPF_DROP;
+}
 
 
 char __license[] __section("license") = "GPL";
