@@ -233,6 +233,7 @@ static int BPF_FUNC(skb_seg6_change_field, struct __sk_buff *skb,
 static int BPF_FUNC(skb_seg6_action_end_x, struct __sk_buff *skb, struct in6_addr *nhaddr);
 static int BPF_FUNC(skb_seg6_action_end_t, struct __sk_buff *skb, uint32_t tbl_id);
 static int BPF_FUNC(skb_seg6_action_end_b6, struct __sk_buff *skb, struct ip6_srh_t *srh);
+static int BPF_FUNC(skb_seg6_encap_push, struct __sk_buff *skb, struct ip6_srh_t *srh);
 
 
 /** LLVM built-ins, mem*() routines work for constant size */
