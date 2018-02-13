@@ -178,5 +178,47 @@ int do_encap_push(struct __sk_buff *skb) {
     return BPF_REDIRECT;
 }
 
+__section("long_encap_push")
+int do_long_encap_push(struct __sk_buff *skb) {
+    char srh_buf[88]; // room for 5 segments
+    struct ip6_srh_t *srh = (struct ip6_srh_t *)srh_buf;
+    srh->hdrlen = 10;
+    srh->type = 4;
+    srh->segments_left = 4;
+    srh->first_segment = 4;
+    srh->flags = 0;
+    srh->tag = 0;
+
+    struct in6_addr *seg0 = (struct in6_addr *)((char*) srh + sizeof(*srh));
+    struct in6_addr *seg1 = (struct in6_addr *)((char*) seg0 + sizeof(*seg0));
+    struct in6_addr *seg2 = (struct in6_addr *)((char*) seg1 + sizeof(*seg1));
+    struct in6_addr *seg3 = (struct in6_addr *)((char*) seg2 + sizeof(*seg2));
+    struct in6_addr *seg4 = (struct in6_addr *)((char*) seg3 + sizeof(*seg3));
+    unsigned long long hi = 0xfc00000000000000;
+    unsigned long long lo = 0x1;
+    seg0->lo = htonll(lo);
+    seg0->hi = htonll(hi);
+
+    seg1->hi = seg0->hi;
+    lo = 0x2;
+    seg1->lo = htonll(lo);
+
+    seg2->hi = seg0->hi;
+    lo = 0x3;
+    seg2->lo = htonll(lo);
+
+    seg3->hi = seg0->hi;
+    lo = 0x4;
+    seg3->lo = htonll(lo);
+
+    seg4->hi = seg0->hi;
+    lo = 0x5;
+    seg4->lo = htonll(lo);
+
+    int ret = skb_seg6_encap_push(skb, srh);
+    if (ret != 0)
+        return BPF_DROP;
+    return BPF_REDIRECT;
+}
 
 char __license[] __section("license") = "GPL";

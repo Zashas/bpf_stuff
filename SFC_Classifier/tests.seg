@@ -1,0 +1,12 @@
+`rm /sys/fs/bpf/ip/globals/map_rules` 
+`rm /sys/fs/bpf/ip/globals/map_rules_nb` 
+
+if add dum1
+`ip -6 route add fb00::16 encap bpf out obj classifier_bpf.o section classifier dev dum0`
+`ip -6 route add fc00::3 dev dum1`
+`./classifier rules.json`
+
+
+> dead::beef -> fb00::16
+< (dum1) fd00::42 -> fc00::3 / [fc00::1, fc00::2, +fc00::3] / dead::beef -> fb00::16
+

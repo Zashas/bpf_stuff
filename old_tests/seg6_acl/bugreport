@@ -1,0 +1,33 @@
+sudo ip -6 route add fc00::/16 encap bpf out obj acl_bpf.o sec lwt_acl dev lo
+
+(segway-yeSBDavQ) [math@trondheim lwt_acl]$ python
+Python 2.7.14 (default, Sep 20 2017, 01:25:59) 
+[GCC 7.2.0] on linux2
+Type "help", "copyright", "credits" or "license" for more information.
+>>> import pyroute2
+>>> pyroute2.VERSION
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+AttributeError: 'module' object has no attribute 'VERSION'
+>>> pyroute2.version
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+AttributeError: 'module' object has no attribute 'version'
+>>> ip = pyroute2.IPDB()
+>>> ip.routes
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  File "/home/math/.local/share/virtualenvs/segway-yeSBDavQ/lib/python2.7/site-packages/pyroute2/ipdb/main.py", line 900, in __getattribute__
+    obj._register()
+  File "/home/math/.local/share/virtualenvs/segway-yeSBDavQ/lib/python2.7/site-packages/pyroute2/ipdb/routes.py", line 997, in _register
+    self.load_netlink(msg)
+  File "/home/math/.local/share/virtualenvs/segway-yeSBDavQ/lib/python2.7/site-packages/pyroute2/ipdb/routes.py", line 1095, in load_netlink
+    key = self.tables[table].load(msg)
+  File "/home/math/.local/share/virtualenvs/segway-yeSBDavQ/lib/python2.7/site-packages/pyroute2/ipdb/routes.py", line 920, in load
+    self[key] = msg
+  File "/home/math/.local/share/virtualenvs/segway-yeSBDavQ/lib/python2.7/site-packages/pyroute2/ipdb/routes.py", line 932, in __setitem__
+    record['route'].load_netlink(value)
+  File "/home/math/.local/share/virtualenvs/segway-yeSBDavQ/lib/python2.7/site-packages/pyroute2/ipdb/routes.py", line 307, in load_netlink
+    for l in value.get_attr('MPLS_IPTUNNEL_DST'):
+TypeError: 'NoneType' object is not iterable
+
