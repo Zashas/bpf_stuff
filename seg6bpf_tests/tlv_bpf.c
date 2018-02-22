@@ -38,11 +38,11 @@ struct ip6_srh_t *get_srh(struct __sk_buff *skb) {
 
     return srh;
 }
-__attribute__((always_inline)) int update_padding(struct __sk_buff *skb, int new_pad, int old_pad, int pad_off)
+__attribute__((always_inline)) int update_padding(struct __sk_buff *skb, uint32_t new_pad, uint32_t old_pad, uint32_t pad_off)
 {
 	int err;
 	if (new_pad != old_pad) {
-		err = skb_seg6_adjust_srh(skb, pad_off, new_pad - old_pad);
+		err = skb_seg6_adjust_srh(skb, pad_off, (int) new_pad - (int) old_pad);
 		if (err != 0) {
 			return 0;
 		}
@@ -53,7 +53,7 @@ __attribute__((always_inline)) int update_padding(struct __sk_buff *skb, int new
 		pad_tlv->type = SR6_TLV_PADDING;
 		pad_tlv->len = new_pad - sizeof(*pad_tlv);
 
-		err = skb_seg6_store_bytes(skb, pad_off, (void *)pad_tlv, new_pad);
+		err = skb_seg6_store_bytes(skb, pad_off, (void *)pad_tlv_buf, new_pad);
 		if (err != 0) {
 			return 0;
 		}
@@ -61,13 +61,10 @@ __attribute__((always_inline)) int update_padding(struct __sk_buff *skb, int new
 	return 1;
 
 }
-__attribute__((always_inline)) int add_tlv(struct __sk_buff *skb, struct ip6_srh_t *srh, uint32_t tlv_offset, struct sr6_tlv *itlv)
+__attribute__((always_inline)) int add_tlv(struct __sk_buff *skb, struct ip6_srh_t *srh, uint32_t tlv_offset, struct sr6_tlv *itlv, uint8_t tlv_size)
 {
-	struct sr6_tlv *ptlv, *pad_tlv;
-	struct ipv6hdr *hdr;
-	int ret, padding_needed, space_needed;
-	int pad_size = 0;
-	int pad_offset = 0;
+	uint32_t pad_size = 0;
+	uint32_t pad_offset = 0;
 	int srh_offset = (char *)srh - (char *)(long)skb->data;
 	if (tlv_offset != -1)
 		tlv_offset += srh_offset;
@@ -117,36 +114,33 @@ __attribute__((always_inline)) int add_tlv(struct __sk_buff *skb, struct ip6_srh
 	else if (!offset_valid)
 		return 0;
 
-	padding_needed = 8 - (pad_offset - srh_offset + sizeof(*itlv) + itlv->len) % 8;
-	if (padding_needed == 8)
-		padding_needed = 0;
-	else if (padding_needed < 2)
-		padding_needed += 8;
-
 	printt("tlv off len %d %d\n", tlv_offset, sizeof(*itlv) + itlv->len);
 	int err = skb_seg6_adjust_srh(skb, tlv_offset, sizeof(*itlv) + itlv->len);
 	if (err != 0) {
 		printt("adjust fail %d %d %d\n", err, tlv_offset, sizeof(*itlv) + itlv->len);
 		return 0;
 	}
-	err = skb_seg6_store_bytes(skb, tlv_offset, (void *)itlv, sizeof(*itlv) + itlv->len);
+	//err = skb_seg6_store_bytes(skb, tlv_offset, (void *)itlv, sizeof(*itlv) + itlv->len);
+	err = skb_seg6_store_bytes(skb, tlv_offset, (void *)itlv, tlv_size);
 	if (err != 0) {
 		printt("store fail %d %d %d\n", err,tlv_offset, sizeof(*itlv) + itlv->len);
 		return 0;
 	}
 
 	pad_offset += sizeof(*itlv) + itlv->len;
-		
-	return update_padding(skb, padding_needed, pad_size, pad_offset);
+	uint32_t new_pad = (8 - (pad_offset - srh_offset) % 8);
+	if (new_pad < 2)
+		new_pad += 8;
+	else if (new_pad == 8)
+		new_pad = 0;
+
+	return update_padding(skb, new_pad, pad_size, pad_offset);
 }
 
 __attribute__((always_inline)) int delete_tlv(struct __sk_buff *skb, struct ip6_srh_t *srh, uint32_t tlv_offset)
 {
-	struct sr6_tlv *ptlv, *pad_tlv;
-	struct ipv6hdr *hdr;
-	int ret, padding_needed, space_needed;
-	int pad_size = 0;
-	int pad_offset = 0;
+	uint32_t pad_size = 0;
+	uint32_t pad_offset = 0;
 	int srh_offset = (char *)srh - (char *)(long)skb->data;
 	tlv_offset += srh_offset;
 
@@ -196,12 +190,6 @@ __attribute__((always_inline)) int delete_tlv(struct __sk_buff *skb, struct ip6_
 	if (skb_load_bytes(skb, tlv_offset, &tlv, sizeof(tlv)))
 		return 0;
 
-	padding_needed = 8 - (pad_offset - srh_offset - sizeof(tlv) - tlv.len) % 8;
-	if (padding_needed == 8)
-		padding_needed = 0;
-	else if (padding_needed < 2)
-		padding_needed += 8;
-
 	printt("tlv off len %d %d\n", tlv_offset, -(sizeof(tlv) + tlv.len));
 	int err = skb_seg6_adjust_srh(skb, tlv_offset, -(sizeof(tlv) + tlv.len));
 	if (err != 0) {
@@ -210,8 +198,14 @@ __attribute__((always_inline)) int delete_tlv(struct __sk_buff *skb, struct ip6_
 	}
 	
 	pad_offset -= sizeof(tlv) + tlv.len;
-		
-	return update_padding(skb, padding_needed, pad_size, pad_offset);
+	uint32_t new_pad = (8 - (pad_offset - srh_offset) % 8);
+	if (new_pad < 2)
+		new_pad += 8;
+	else if (new_pad == 8)
+		new_pad = 0;
+	printt("padding needed :%d\n", new_pad);
+
+	return update_padding(skb, new_pad, pad_size, pad_offset);
 }
 
 
@@ -230,7 +224,7 @@ int do_add_8(struct __sk_buff *skb) {
     tlv.value[2] = 3;
     tlv.value[3] = 4;
     tlv.value[4] = 5;
-    int ret = add_tlv(skb,srh, (srh->hdrlen+1) << 3, (struct sr6_tlv *)&tlv);
+    int ret = add_tlv(skb,srh, (srh->hdrlen+1) << 3, (struct sr6_tlv *)&tlv, 8);
 
     if (ret == 0)
         return BPF_OK;
@@ -250,7 +244,7 @@ int do_add_6(struct __sk_buff *skb) {
     tlv.value[0] = 1;
     tlv.value[1] = 2;
     tlv.value[2] = 3;
-    int ret = add_tlv(skb,srh, (srh->hdrlen+1) << 3, (struct sr6_tlv *)&tlv);
+    int ret = add_tlv(skb,srh, (srh->hdrlen+1) << 3, (struct sr6_tlv *)&tlv, 6);
 
     return (ret) ? BPF_OK : BPF_DROP;
 }
@@ -270,7 +264,7 @@ int do_add_ingr(struct __sk_buff *skb) {
     memset(tlv.value, 0, 16);
     tlv.value[15] = 1;
     tlv.value[0] = 0xfc;
-    int ret = add_tlv(skb,srh, (srh->hdrlen+1) << 3, (struct sr6_tlv *)&tlv);
+    int ret = add_tlv(skb,srh, (srh->hdrlen+1) << 3, (struct sr6_tlv *)&tlv, 20);
 
     return (ret) ? BPF_OK : BPF_DROP;
 }
@@ -289,7 +283,7 @@ int do_add_ingr_no_offset(struct __sk_buff *skb) {
     memset(tlv.value, 0, 16);
     tlv.value[15] = 1;
     tlv.value[0] = 0xfc;
-    int ret = add_tlv(skb,srh, -1, (struct sr6_tlv *)&tlv);
+    int ret = add_tlv(skb,srh, -1, (struct sr6_tlv *)&tlv, 20);
 
     return (ret) ? BPF_OK : BPF_DROP;
 }
@@ -309,7 +303,7 @@ int do_add_ingr_mid(struct __sk_buff *skb) {
     tlv.value[15] = 0xef;
     tlv.value[14] = 0xbe;
     tlv.value[0] = 0xfc;
-    int ret = add_tlv(skb,srh, 8 + (srh->first_segment+1)*16 + 20, (struct sr6_tlv *)&tlv);
+    int ret = add_tlv(skb,srh, 8 + (srh->first_segment+1)*16 + 20, (struct sr6_tlv *)&tlv, 20);
     printt("ret=%d\n",ret);
 
 
@@ -332,7 +326,7 @@ int do_add_ingr_wrong_offset(struct __sk_buff *skb) {
     memset(tlv.value, 0, 16);
     tlv.value[15] = 1;
     tlv.value[0] = 0xfc;
-    int ret = add_tlv(skb,srh, 11, (struct sr6_tlv *)&tlv);
+    int ret = add_tlv(skb,srh, 11, (struct sr6_tlv *)&tlv, 20);
 
     return (ret) ? BPF_OK : BPF_DROP;
 }
@@ -350,31 +344,7 @@ int do_add_opaq_begin(struct __sk_buff *skb) {
     tlv.reserved = 0;
     memset(tlv.value, 0, 16);
     tlv.value[15] = 0x42;
-    int ret = add_tlv(skb,srh, 8+(srh->first_segment+1)*16, (struct sr6_tlv *)&tlv);
-
-    return (ret) ? BPF_OK : BPF_DROP;
-}
-
-#define SEG6_FLAGS 0
-#define SEG6_FLAG_HMAC		(1 << 3)
-
-__section("add_hmac")
-int do_add_hmac(struct __sk_buff *skb) {
-    struct ip6_srh_t *srh = get_srh(skb);
-    if (srh == NULL)
-        return BPF_DROP;
-
-    int ret = skb_seg6_change_field(skb, SEG6_FLAGS, srh->flags | SEG6_FLAG_HMAC);
-    if (ret != 0)
-        return BPF_DROP;
-
-    struct sr6_tlv_hmac tlv;
-    tlv.type = 5;
-    tlv.len = 38;
-    tlv.reserved = 0;
-    tlv.keyid = htonl(1042);
-    memset(tlv.hmac, 0, 32);
-    ret = add_tlv(skb,srh, 0, (struct sr6_tlv *)&tlv);
+    int ret = add_tlv(skb,srh, 8+(srh->first_segment+1)*16, (struct sr6_tlv *)&tlv, 20);
 
     return (ret) ? BPF_OK : BPF_DROP;
 }
@@ -405,13 +375,30 @@ int do_del_20(struct __sk_buff *skb) {
 }
 
 __section("del_24")
-int do_del_24(struct __sk_buff *skb) {
+ int do_del_24(struct __sk_buff *skb) {
     struct ip6_srh_t *srh = get_srh(skb);
     if (srh == NULL)
         return BPF_DROP;
 
     int ret = delete_tlv(skb, srh, 8+(srh->first_segment+1)*16+24);
     return (ret) ? BPF_OK : BPF_DROP;
+}
+
+__section("del_24_hmac")
+ int do_del_24_hmac(struct __sk_buff *skb) {
+	struct ip6_srh_t *srh = get_srh(skb);
+	int offset = (char *)srh - (char *)(long)skb->data;
+	if (srh == NULL)
+		return BPF_DROP;
+
+	uint8_t flags = srh->flags & (~SR6_FLAG_HMAC);
+
+	int ret = delete_tlv(skb, srh, 8+(srh->first_segment+1)*16+24);
+	if (ret == BPF_DROP)
+		return BPF_DROP;
+
+	skb_seg6_store_bytes(skb, offset + offsetof(struct ip6_srh_t, flags), (void *) &flags, sizeof(flags));
+	return BPF_OK;
 }
 
 

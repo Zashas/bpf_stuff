@@ -227,7 +227,7 @@ static int BPF_FUNC(skb_get_tunnel_opt, struct __sk_buff *skb,
 static int BPF_FUNC(skb_set_tunnel_opt, struct __sk_buff *skb,
 		    const void *from, uint32_t size);
 
-/* OLD SEG6 helpers */
+/* OLD SEG6 helpers
 static int BPF_FUNC(skb_seg6_change_field, struct __sk_buff *skb,
 		    uint8_t field, uint32_t value);
 static int BPF_FUNC(skb_seg6_add_tlv, struct __sk_buff *skb, uint32_t tlv_offset,
@@ -237,11 +237,12 @@ static int BPF_FUNC(skb_seg6_action_end_x, struct __sk_buff *skb, struct ip6_add
 static int BPF_FUNC(skb_seg6_action_end_t, struct __sk_buff *skb, uint32_t tbl_id);
 static int BPF_FUNC(skb_seg6_action_end_b6, struct __sk_buff *skb, struct ip6_srh_t *srh);
 static int BPF_FUNC(skb_seg6_encap_push, struct __sk_buff *skb, struct ip6_srh_t *srh);
+*/
 
 
 static int BPF_FUNC(skb_push_encap, struct __sk_buff *skb, uint32_t type, void *hdr, uint32_t len);
 static int BPF_FUNC(skb_seg6_store_bytes, struct __sk_buff *skb, uint32_t offset, const void *from, uint32_t len);
-static int BPF_FUNC(skb_seg6_action, struct __sk_buff *skb, uint32_t action, void *param);
+static int BPF_FUNC(skb_seg6_action, struct __sk_buff *skb, uint32_t action, void *param, uint32_t param_len);
 static int BPF_FUNC(skb_seg6_adjust_srh, struct __sk_buff *skb, uint32_t offset, int32_t len);
 
 /** LLVM built-ins, mem*() routines work for constant size */

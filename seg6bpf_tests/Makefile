@@ -13,4 +13,4 @@ clean:
 	rm $(OBJS)
 
 %.o: %.c
-	$(CC) -O2 -emit-llvm -g -c $< -o - | $(LLC) -march=bpf -filetype=obj -o $@
+	$(CC) -Wall -O2 -emit-llvm -g -c $< -o - | $(LLC) -march=bpf -filetype=obj -o $@

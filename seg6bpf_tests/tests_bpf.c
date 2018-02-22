@@ -74,7 +74,7 @@ int do_end_x(struct __sk_buff *skb) {
 	unsigned long long lo = 0x1;
 	addr.lo = htonll(lo);
 	addr.hi = htonll(hi);
-	skb_seg6_action(skb, SEG6_LOCAL_ACTION_END_X, (void *)&addr); // End.X to fc00::14
+	skb_seg6_action(skb, SEG6_LOCAL_ACTION_END_X, (void *)&addr,sizeof(addr)); // End.X to fc00::14
 	return BPF_REDIRECT;
 }
 
@@ -82,7 +82,7 @@ __section("end_t")
 int do_end_t(struct __sk_buff *skb)
 {
 	int table = 42;
-	skb_seg6_action(skb, SEG6_LOCAL_ACTION_END_T, (void *)&table);
+	skb_seg6_action(skb, SEG6_LOCAL_ACTION_END_T, (void *)&table, sizeof(table));
 	return BPF_REDIRECT;
 }
 
@@ -90,6 +90,7 @@ __section("end_b6")
 int do_end_b6(struct __sk_buff *skb) {
 	char srh_buf[40]; // room for two segments
 	struct ip6_srh_t *srh = (struct ip6_srh_t *)srh_buf;
+	srh->nexthdr = 0;
 	srh->hdrlen = 4;
 	srh->type = 4;
 	srh->segments_left = 1;
@@ -118,6 +119,7 @@ __section("end_b6_wrong")
 int do_end_b6_wrong(struct __sk_buff *skb) {
 	char srh_buf[40]; // room for two segments
 	struct ip6_srh_t *srh = (struct ip6_srh_t *)srh_buf;
+	srh->nexthdr = 0;
 	srh->hdrlen = 4;
 	srh->type = 4;
 	srh->segments_left = 2;
@@ -147,6 +149,7 @@ __section("encap_push")
 int do_encap_push(struct __sk_buff *skb) {
 	char srh_buf[40]; // room for two segments
 	struct ip6_srh_t *srh = (struct ip6_srh_t *)srh_buf;
+	srh->nexthdr = 0;
 	srh->hdrlen = 4;
 	srh->type = 4;
 	srh->segments_left = 1;
@@ -165,7 +168,7 @@ int do_encap_push(struct __sk_buff *skb) {
 	lo = 0x2;
 	seg1->lo = htonll(lo);
 
-	int ret = skb_push_encap(skb, 0, (void *)srh, sizeof(srh_buf));
+	int ret = skb_push_encap(skb, 0, (void *)&srh_buf[0], sizeof(srh_buf));
 	if (ret != 0)
 		return BPF_DROP;
 	return BPF_REDIRECT;
@@ -175,6 +178,7 @@ __section("long_encap_push")
 int do_long_encap_push(struct __sk_buff *skb) {
 	char srh_buf[88]; // room for 5 segments
 	struct ip6_srh_t *srh = (struct ip6_srh_t *)srh_buf;
+	srh->nexthdr = 0;
 	srh->hdrlen = 10;
 	srh->type = 4;
 	srh->segments_left = 4;
