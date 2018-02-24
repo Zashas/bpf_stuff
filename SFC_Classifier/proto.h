@@ -88,18 +88,6 @@ struct ip6_addr {
   unsigned long long  lo;
 } BPF_PACKET_HEADER;
 
-struct ip6_srh_t {
-  unsigned char nexthdr;
-  unsigned char hdrlen;
-  unsigned char type;
-  unsigned char segments_left;
-  unsigned char first_segment;
-  unsigned char flags;
-  unsigned short tag;
-	
-  struct ip6_addr segments[0];
-} BPF_PACKET_HEADER;
-
 struct ip6_opt_t {
   unsigned char  next_header;
   unsigned char  ext_len;
@@ -162,6 +150,19 @@ struct vxlan_gbp_t {
   unsigned int key:24;
   unsigned int rsv6:8;
 } BPF_PACKET_HEADER;
+
+struct ip6_srh_t {
+  unsigned char nexthdr;
+  unsigned char hdrlen;
+  unsigned char type;
+  unsigned char segments_left;
+  unsigned char first_segment;
+  unsigned char flags;
+  unsigned short tag;
+	
+  struct ip6_addr segments[0];
+} BPF_PACKET_HEADER;
+
 
 struct sr6_tlv {
     unsigned char type;
