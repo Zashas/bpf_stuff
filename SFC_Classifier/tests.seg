@@ -1,22 +1,20 @@
-if add dum1
-
-`./classifier.py classifier_http.c fb00::/16 dum1`
+`./classifier.py classifier_http.c fb00::/16 dum0`
 `sleep 1`
 
 > dead::beef -> fb00::42
 < none
 
-> dead::beef -> fb00::16 / UDP(42, 80) / "This is a QUIC payload"
+> dead::beef -> fb00::10 / UDP(42, 80) / "This is a QUIC payload"
 < none
 
-> dead::beef -> fb00::16 / TCP(8907, 25) / "This is a SMTP payload"
+> dead::beef -> fb00::11 / TCP(8907, 25) / "This is a SMTP payload"
 < none
 
-> dead::beef -> fb00::16 / TCP(1337, 443) / "This is a HTTPS payload"
-< dead::beef -> fb00::16 / TCP(1337, 443) / "This is a HTTPS payload"
+> dead::beef -> fb00::12 / TCP(898, 80) / "This is a HTTP payload"
+< dead::beef -> fc00:aaaa::1 / [fb00::12, fc00:aaaa::3, fc00:aaaa::2, +fc00:aaaa::1] / TCP(898, 80) / "This is a HTTP payload"
 
-> dead::beef -> fb00::16 / TCP(898, 80) / "This is a HTTP payload"
-< dead::beef -> fb00::16 / TCP(898, 80) / "This is a HTTP payload"
+> dead::beef -> fb00::12 / TCP(1337, 443) / "This is a HTTPS payload"
+< dead::beef -> fc00:bbbb::1 / [fb00::12, fc00:bbbb::2, +fc00:bbbb::1] / TCP(1337, 443) / "This is a HTTPS payload"
 
 
 `sleep 1`

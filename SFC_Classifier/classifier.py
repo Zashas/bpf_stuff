@@ -3,7 +3,7 @@
 from bcc import BPF
 from pyroute2 import IPRoute
 import sys, logging, signal, socket
-from daemonize2 import Daemonize
+from daemonize import Daemonize
 import ctypes as ct
 from time import sleep
 
@@ -37,15 +37,15 @@ def print_skb_event(cpu, data, size):
             p = skb_event.raw[40:44]
             sport = socket.ntohs(p[1] << 8 | p[0])
             dport = socket.ntohs(p[3] << 8 | p[2])
-            args = "({} {})".format(sport, dport)
+            args = "({}, {})".format(sport, dport)
 
-        print("Dropped IPv6 pkt : {} -> {} / {} {}".format(src_ip, dst_ip, proto,args))
+        logger.info("Dropped IPv6 pkt : {} -> {} / {} {}".format(src_ip, dst_ip, proto,args))
     else:
-        print("Dropped non-IPv6 pkt")
+        logger.info("Dropped non-IPv6 pkt")
 
 def install_rt(bpf_file):
     b = BPF(src_file=bpf_file)
-    fn = b.load_func("classifier", BPF.LWT_OUT)
+    fn = b.load_func("classifier", BPF.LWT_IN)
 
     fds = []
     fds.append(b["nb_pkts"].map_fd)
@@ -54,7 +54,7 @@ def install_rt(bpf_file):
     ipr = IPRoute()
     idx = ipr.link_lookup(ifname=iface)[0]
     
-    encap = {'type':'bpf', 'out':{'fd':fn.fd, 'name':fn.name}}
+    encap = {'type':'bpf', 'in':{'fd':fn.fd, 'name':fn.name}}
     ipr.route("add", dst=dst, oif=idx, encap=encap)
     
     return b, fds
@@ -70,13 +70,12 @@ def run_daemon(bpf):
     signal.signal(signal.SIGINT, remove_rt)
     bpf["dropped_pkts"].open_perf_buffer(print_skb_event, page_cnt=1024)
     while 1:
-        #print(str(bpf["nb_drops"][0].value))
-        #logger.info(str(bpf["nb_drops"][0].value))
         bpf.kprobe_poll()
-        #sleep(1)
+        sleep(0.01) # tune polling frequency here
 
-if len(sys.argv) < 3:
+if len(sys.argv) < 4:
     print("Format: ./classifier.py BPF PREFIX DEV")
+    sys.exit(1)
 
 dst, iface = sys.argv[2:4]
 bpf, fds = install_rt(sys.argv[1])
@@ -89,8 +88,11 @@ fh = logging.FileHandler("/tmp/seg6_classifier_{}.log".format(rt_name), "a")
 fh.setLevel(logging.DEBUG)
 logger.addHandler(fh)
 fds.append(fh.stream.fileno())
+formatter = logging.Formatter("%(asctime)s : %(message)s",
+                                              "%b %e %H:%M:%S")
+fh.setFormatter(formatter)
 
 daemon = Daemonize(app="seg6_classifier", pid=PID.format(rt_name), action=lambda: run_daemon(bpf),
-        keep_fds=fds)
+        keep_fds=fds, logger=logger)
 print("SRv6 classifier logger forked to background.")
 daemon.start()

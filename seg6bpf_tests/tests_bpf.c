@@ -262,5 +262,40 @@ int do_long_b6(struct __sk_buff *skb) {
 	return BPF_REDIRECT;
 }
 
+__section("b6_3seg")
+int do_b6_3seg(struct __sk_buff *skb) {
+	char srh_buf[56]; // room for 3 segments
+	struct ip6_srh_t *srh = (struct ip6_srh_t *)srh_buf;
+	srh->nexthdr = 0;
+	srh->hdrlen = 6;
+	srh->type = 4;
+	srh->segments_left = 2;
+	srh->first_segment = 2;
+	srh->flags = 0;
+	srh->tag = 0;
+
+	struct ip6_addr *seg0 = (struct ip6_addr *)((char*) srh + sizeof(*srh));
+	struct ip6_addr *seg1 = (struct ip6_addr *)((char*) seg0 + sizeof(*seg0));
+	struct ip6_addr *seg2 = (struct ip6_addr *)((char*) seg1 + sizeof(*seg1));
+	unsigned long long hi = 0xfc00000000000000;
+	unsigned long long lo = 0x1;
+	seg0->lo = htonll(lo);
+	seg0->hi = htonll(hi);
+
+	seg1->hi = seg0->hi;
+	lo = 0x2;
+	seg1->lo = htonll(lo);
+
+	seg2->hi = seg0->hi;
+	lo = 0x3;
+	seg2->lo = htonll(lo);
+
+	int ret = skb_push_encap(skb, 1, (void *)srh, sizeof(srh_buf));
+	if (ret != 0)
+		return BPF_DROP;
+	return BPF_REDIRECT;
+}
+
+
 
 char __license[] __section("license") = "GPL";

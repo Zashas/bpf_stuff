@@ -54,7 +54,6 @@ int classifier(struct __sk_buff *skb) {
 			goto drop;
 
 		if (ntohs(tcp->dst_port) == 443) {
-			bpf_trace_printk("this is HTTPS\n");
 			unsigned long long hi = 0xfc00bbbb00000000;
 			unsigned long long lo = 0x2;
 			seg1->lo = bpf_htonll(lo);
@@ -64,40 +63,39 @@ int classifier(struct __sk_buff *skb) {
 			lo = 0x1;
 			seg2->lo = bpf_htonll(lo);
 
-			seg3->hi = 0;
-			seg3->lo = 0;
+			seg3->hi = seg2->hi;
+			seg3->lo = seg2->lo;
 
 			srh->hdrlen = 6;
 			srh->segments_left = 2;
 			srh->first_segment = 2;
 			ret = bpf_skb_push_encap(skb, 1, (void *)srh, 56);
 		} else if (ntohs(tcp->dst_port) == 80) {
-			bpf_trace_printk("this is HTTP\n");
 			unsigned long long hi = 0xfc00aaaa00000000;
 			unsigned long long lo = 0x3;
 			seg1->lo = bpf_htonll(lo);
 			seg1->hi = bpf_htonll(hi);
 
-			seg2->hi = seg1->hi;
 			lo = 0x2;
+			seg2->hi = seg1->hi;
 			seg2->lo = bpf_htonll(lo);
 
-			seg3->hi = seg1->hi;
 			lo = 0x1;
+			seg3->hi = seg1->hi;
 			seg3->lo = bpf_htonll(lo);
 
 			srh->hdrlen = 8;
 			srh->segments_left = 3;
 			srh->first_segment = 3;
 
-			ret = bpf_skb_push_encap(skb, 0, (void *)srh, 72);
+			ret = bpf_skb_push_encap(skb, 1, (void *)srh, 72);
 		}
 		else
 			goto drop;
 	} else
 		goto drop;
 
-	return ret ? BPF_DROP : BPF_REDIRECT;
+	return ret ? BPF_DROP : BPF_OK;
 drop:
 	dropped_pkts.perf_submit_skb(skb, skb->len, &val2, sizeof(val2));
 	return BPF_DROP;
