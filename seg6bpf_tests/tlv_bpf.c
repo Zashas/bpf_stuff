@@ -352,13 +352,13 @@ int do_add_opaq_begin(struct __sk_buff *skb) {
 __section("del_first")
 int do_del_first(struct __sk_buff *skb) {
     struct ip6_srh_t *srh = get_srh(skb);
-    void *data_end = (void *)(long)skb->data_end;
     if (srh == NULL)
         return BPF_DROP;
 
+    /*
     struct sr6_tlv *tlv = (struct sr6_tlv *)((char *)srh+8+(srh->first_segment+1)*16);
     if ((void *)tlv > data_end) // Check needed otherwise filter not accepted by the kernel
-        return BPF_OK;
+        return BPF_OK;*/
 
     int ret = delete_tlv(skb, srh, 8+(srh->first_segment+1)*16);
     return (ret) ? BPF_OK : BPF_DROP;
