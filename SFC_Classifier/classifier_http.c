@@ -69,7 +69,7 @@ int classifier(struct __sk_buff *skb) {
 			srh->hdrlen = 6;
 			srh->segments_left = 2;
 			srh->first_segment = 2;
-			ret = bpf_skb_push_encap(skb, 1, (void *)srh, 56);
+			ret = bpf_lwt_push_encap(skb, 1, (void *)srh, 56);
 		} else if (ntohs(tcp->dst_port) == 80) {
 			unsigned long long hi = 0xfc00aaaa00000000;
 			unsigned long long lo = 0x3;
@@ -88,7 +88,7 @@ int classifier(struct __sk_buff *skb) {
 			srh->segments_left = 3;
 			srh->first_segment = 3;
 
-			ret = bpf_skb_push_encap(skb, 1, (void *)srh, 72);
+			ret = bpf_lwt_push_encap(skb, 1, (void *)srh, 72);
 		}
 		else
 			goto drop;
