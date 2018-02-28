@@ -191,4 +191,11 @@ struct sr6_tlv_hmac {
 #define SR6_FLAG_ALERT (1 << 4)
 #define SR6_FLAG_HMAC (1 << 3)
 
+#define SR6_TLV_INGRESS 1
+#define SR6_TLV_EGRESS 2
+#define SR6_TLV_OPAQ 3
+#define SR6_TLV_PADDING 4
+#define SR6_TLV_HMAC 5
+#define SR6_TLV_NSH 6
+
 #endif

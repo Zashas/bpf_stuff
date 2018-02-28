@@ -11,6 +11,8 @@ PID = "/tmp/oam_sid_{}.pid"
 PERF_EVENT_FREQ = 0
 sid, iface = None, None
 
+REQ_DUMP_ROUTES = 0
+
 def print_oam_request(cpu, data, size):
     class OAMRequest(ct.Structure):
         _fields_ =  [ ("req_type", ct.c_uint8),
@@ -18,7 +20,11 @@ def print_oam_request(cpu, data, size):
                       ("raw", ct.c_ubyte * (size - ct.sizeof(ct.c_ubyte * 16) - ct.sizeof(ct.c_uint8))) ]
 
     oam_request = ct.cast(data, ct.POINTER(OAMRequest)).contents
-    logger.info("request type {}".format(oam_reqest.req_type.value))
+    if oam_request.req_type == REQ_DUMP_ROUTES:
+        server_addr = socket.inet_ntop(socket.AF_INET6, oam_request.req_args)
+        logger.info("dump to "+server_addr)
+    else:
+        logger.error("Received unknown OAM request type "+oam_request.req_type)
     
 def install_rt(bpf_file):
     b = BPF(src_file=bpf_file)
@@ -65,7 +71,7 @@ fh = logging.FileHandler("/tmp/oam_sid_{}.log".format(rt_name), "a")
 fh.setLevel(logging.DEBUG)
 logger.addHandler(fh)
 fds.append(fh.stream.fileno())
-formatter = logging.Formatter("%(asctime)s : %(message)s",
+formatter = logging.Formatter("%(asctime)s: %(message)s",
                                               "%b %e %H:%M:%S")
 fh.setFormatter(formatter)
 
