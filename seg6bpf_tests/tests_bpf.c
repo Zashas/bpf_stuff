@@ -111,7 +111,6 @@ int do_end_b6(struct __sk_buff *skb) {
 
 	int ret = skb_seg6_action(skb, SEG6_LOCAL_ACTION_END_B6, (void *)srh, sizeof(srh_buf));
 	if (ret != 0) {
-		printt("BPF_DROP de seg6_action: %d\n", ret);
 		return BPF_DROP;
 	}
 	return BPF_REDIRECT;
