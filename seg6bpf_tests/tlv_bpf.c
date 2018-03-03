@@ -42,21 +42,20 @@ __attribute__((always_inline)) int update_padding(struct __sk_buff *skb, uint32_
 {
 	int err;
 	if (new_pad != old_pad) {
-		err = skb_seg6_adjust_srh(skb, pad_off, (int) new_pad - (int) old_pad);
+		err = lwt_seg6_adjust_srh(skb, pad_off, (int) new_pad - (int) old_pad);
 		if (err != 0) {
 			return 0;
 		}
 	}
 	if (new_pad > 0) {
-		char pad_tlv_buf[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+		char pad_tlv_buf[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 		struct sr6_tlv *pad_tlv = (struct sr6_tlv *) pad_tlv_buf;
 		pad_tlv->type = SR6_TLV_PADDING;
-		pad_tlv->len = new_pad - sizeof(*pad_tlv);
+		pad_tlv->len = new_pad - 2;
 
-		err = skb_seg6_store_bytes(skb, pad_off, (void *)pad_tlv_buf, new_pad);
-		if (err != 0) {
+		err = lwt_seg6_store_bytes(skb, pad_off, (void *)pad_tlv_buf, new_pad);
+		if (err != 0)
 			return 0;
-		}
 	}
 	return 1;
 
@@ -88,7 +87,6 @@ __attribute__((always_inline)) int add_tlv(struct __sk_buff *skb, struct ip6_srh
 		struct sr6_tlv tlv;
 		if (skb_load_bytes(skb, cur_off, &tlv, sizeof(tlv)))
 			return 0;
-		//printt("TLV type %d found at offset %d\n", tlv.type, cur_off);
 		
 		if (tlv.type == SR6_TLV_PADDING) {
 			pad_size = tlv.len + sizeof(tlv);
@@ -114,23 +112,20 @@ __attribute__((always_inline)) int add_tlv(struct __sk_buff *skb, struct ip6_srh
 	else if (!offset_valid)
 		return 0;
 
-	//printt("tlv off len %d %d\n", tlv_offset, sizeof(*itlv) + itlv->len);
-	int err = skb_seg6_adjust_srh(skb, tlv_offset, sizeof(*itlv) + itlv->len);
-	if (err != 0) {
-		//printt("adjust fail %d %d %d\n", err, tlv_offset, sizeof(*itlv) + itlv->len);
+	int err = lwt_seg6_adjust_srh(skb, tlv_offset, sizeof(*itlv) + itlv->len);
+	if (err != 0)
 		return 0;
-	}
-	//err = skb_seg6_store_bytes(skb, tlv_offset, (void *)itlv, sizeof(*itlv) + itlv->len);
-	err = skb_seg6_store_bytes(skb, tlv_offset, (void *)itlv, tlv_size);
-	if (err != 0) {
-		//printt("store fail %d %d %d\n", err,tlv_offset, sizeof(*itlv) + itlv->len);
+
+	err = lwt_seg6_store_bytes(skb, tlv_offset, (void *)itlv, tlv_size);
+	if (err != 0)
 		return 0;
-	}
 
 	pad_offset += sizeof(*itlv) + itlv->len;
-	uint32_t new_pad = (8 - (pad_offset - srh_offset) % 8);
-	if (new_pad < 2)
-		new_pad += 8;
+	uint32_t partial_srh_len = pad_offset - srh_offset;
+	uint8_t len_remaining = partial_srh_len % 8;
+	uint8_t new_pad = 8 - len_remaining;
+	if (new_pad == 1) // cannot pad for 1 byte only
+		new_pad = 9;
 	else if (new_pad == 8)
 		new_pad = 0;
 
@@ -190,20 +185,18 @@ __attribute__((always_inline)) int delete_tlv(struct __sk_buff *skb, struct ip6_
 	if (skb_load_bytes(skb, tlv_offset, &tlv, sizeof(tlv)))
 		return 0;
 
-	//printt("tlv off len %d %d\n", tlv_offset, -(sizeof(tlv) + tlv.len));
-	int err = skb_seg6_adjust_srh(skb, tlv_offset, -(sizeof(tlv) + tlv.len));
-	if (err != 0) {
-		//printt("adjust fail %d %d %d\n", err, tlv_offset, sizeof(tlv) + tlv.len);
+	int err = lwt_seg6_adjust_srh(skb, tlv_offset, -(sizeof(tlv) + tlv.len));
+	if (err != 0)
 		return 0;
-	}
 	
 	pad_offset -= sizeof(tlv) + tlv.len;
-	uint32_t new_pad = (8 - (pad_offset - srh_offset) % 8);
-	if (new_pad < 2)
-		new_pad += 8;
+	uint32_t partial_srh_len = pad_offset - srh_offset;
+	uint8_t len_remaining = partial_srh_len % 8;
+	uint8_t new_pad = 8 - len_remaining;
+	if (new_pad == 1) // cannot pad for 1 byte only
+		new_pad = 9;
 	else if (new_pad == 8)
 		new_pad = 0;
-	//printt("padding needed :%d\n", new_pad);
 
 	return update_padding(skb, new_pad, pad_size, pad_offset);
 }
@@ -397,7 +390,7 @@ __section("del_24_hmac")
 	if (ret == BPF_DROP)
 		return BPF_DROP;
 
-	skb_seg6_store_bytes(skb, offset + offsetof(struct ip6_srh_t, flags), (void *) &flags, sizeof(flags));
+	lwt_seg6_store_bytes(skb, offset + offsetof(struct ip6_srh_t, flags), (void *) &flags, sizeof(flags));
 	return BPF_OK;
 }
 

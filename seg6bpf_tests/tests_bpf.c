@@ -45,25 +45,25 @@ int do_drop(struct __sk_buff *skb) {
 __section("inc_tag")
 int do_inc_tag(struct __sk_buff *skb) {
 	struct ip6_srh_t *srh = get_srh(skb);
-	int offset = (char *)srh - (char *)(long)skb->data;
+	int offset = sizeof(struct ip6_t) + offsetof(struct ip6_srh_t, tag);
 	if (srh == NULL)
 		return BPF_DROP;
 
 	uint16_t tag = ntohs(srh->tag);
 	tag = htons(tag+1);
-	skb_seg6_store_bytes(skb, offset + offsetof(struct ip6_srh_t, tag), (void *) &tag, sizeof(srh->tag));
+	lwt_seg6_store_bytes(skb, offset, (void *) &tag, sizeof(srh->tag));
 	return BPF_OK;
 }
 
 __section("alert")
 int do_alert(struct __sk_buff *skb) {
 	struct ip6_srh_t *srh = get_srh(skb);
-	int offset = (char *)srh - (char *)(long)skb->data;
+	int offset = sizeof(struct ip6_t) + offsetof(struct ip6_srh_t, flags);
 	if (srh == NULL)
 		return BPF_DROP;
 
 	uint8_t flags = srh->flags | SR6_FLAG_ALERT;
-	skb_seg6_store_bytes(skb, offset + offsetof(struct ip6_srh_t, flags), (void *) &flags, sizeof(flags));
+	lwt_seg6_store_bytes(skb, offset, (void *) &flags, sizeof(flags));
 	return BPF_OK;
 }
 
@@ -74,7 +74,7 @@ int do_end_x(struct __sk_buff *skb) {
 	unsigned long long lo = 0x1;
 	addr.lo = htonll(lo);
 	addr.hi = htonll(hi);
-	skb_seg6_action(skb, SEG6_LOCAL_ACTION_END_X, (void *)&addr,sizeof(addr)); // End.X to fc00::14
+	lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_X, (void *)&addr,sizeof(addr)); // End.X to fc00::14
 	return BPF_REDIRECT;
 }
 
@@ -82,7 +82,7 @@ __section("end_t")
 int do_end_t(struct __sk_buff *skb)
 {
 	int table = 42;
-	skb_seg6_action(skb, SEG6_LOCAL_ACTION_END_T, (void *)&table, sizeof(table));
+	lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_T, (void *)&table, sizeof(table));
 	return BPF_REDIRECT;
 }
 
@@ -109,7 +109,7 @@ int do_end_b6(struct __sk_buff *skb) {
 	lo = 0x2;
 	seg1->lo = htonll(lo);
 
-	int ret = skb_seg6_action(skb, SEG6_LOCAL_ACTION_END_B6, (void *)srh, sizeof(srh_buf));
+	int ret = lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_B6, (void *)srh, sizeof(srh_buf));
 	if (ret != 0) {
 		return BPF_DROP;
 	}
@@ -139,7 +139,7 @@ int do_b6_encap(struct __sk_buff *skb) {
 	lo = 0x2;
 	seg1->lo = htonll(lo);
 
-	int ret = skb_seg6_action(skb, SEG6_LOCAL_ACTION_END_B6_ENCAP, (void *)srh, sizeof(srh_buf));
+	int ret = lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_B6_ENCAP, (void *)srh, sizeof(srh_buf));
 	if (ret != 0)
 		return BPF_DROP;
 	return BPF_REDIRECT;
@@ -168,7 +168,7 @@ int do_b6_encap_wrong(struct __sk_buff *skb) {
 	lo = 0x2;
 	seg1->lo = htonll(lo);
 
-	int ret = skb_seg6_action(skb, SEG6_LOCAL_ACTION_END_B6_ENCAP, (void *)srh, sizeof(srh_buf));
+	int ret = lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_B6_ENCAP, (void *)srh, sizeof(srh_buf));
 	if (ret != 0)
 		return BPF_DROP;
 
@@ -213,7 +213,7 @@ int do_long_b6_encap(struct __sk_buff *skb) {
 	lo = 0x5;
 	seg4->lo = htonll(lo);
 
-	int ret = skb_seg6_action(skb, SEG6_LOCAL_ACTION_END_B6_ENCAP, (void *)srh, sizeof(srh_buf));
+	int ret = lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_B6_ENCAP, (void *)srh, sizeof(srh_buf));
 	if (ret != 0)
 		return BPF_DROP;
 	return BPF_REDIRECT;
@@ -257,7 +257,7 @@ int do_long_b6(struct __sk_buff *skb) {
 	lo = 0x5;
 	seg4->lo = htonll(lo);
 
-	int ret = skb_seg6_action(skb, SEG6_LOCAL_ACTION_END_B6, (void *)srh, sizeof(srh_buf));
+	int ret = lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_B6, (void *)srh, sizeof(srh_buf));
 	if (ret != 0)
 		return BPF_DROP;
 	return BPF_REDIRECT;
@@ -286,7 +286,7 @@ int do_push_encap(struct __sk_buff *skb) {
 	lo = 0x2;
 	seg1->lo = htonll(lo);
 
-	int ret = skb_push_encap(skb, 0, (void *)srh, sizeof(srh_buf));
+	int ret = lwt_push_encap(skb, 0, (void *)srh, sizeof(srh_buf));
 	if (ret != 0)
 		return BPF_DROP;
 	return BPF_REDIRECT;
@@ -315,7 +315,7 @@ int do_push_encap_wrong(struct __sk_buff *skb) {
 	lo = 0x2;
 	seg1->lo = htonll(lo);
 
-	int ret = skb_push_encap(skb, 1, (void *)srh, sizeof(srh_buf));
+	int ret = lwt_push_encap(skb, 1, (void *)srh, sizeof(srh_buf));
 	if (ret != 0)
 		return BPF_DROP;
 
@@ -360,7 +360,7 @@ int do_long_encap_push(struct __sk_buff *skb) {
 	lo = 0x5;
 	seg4->lo = htonll(lo);
 
-	int ret = skb_push_encap(skb, 0, (void *)srh, sizeof(srh_buf));
+	int ret = lwt_push_encap(skb, 0, (void *)srh, sizeof(srh_buf));
 	if (ret != 0)
 		return BPF_DROP;
 	return BPF_REDIRECT;
@@ -404,7 +404,7 @@ int do_long_encap_inline(struct __sk_buff *skb) {
 	lo = 0x5;
 	seg4->lo = htonll(lo);
 
-	int ret = skb_push_encap(skb, 1, (void *)srh, sizeof(srh_buf));
+	int ret = lwt_push_encap(skb, 1, (void *)srh, sizeof(srh_buf));
 	if (ret != 0)
 		return BPF_DROP;
 	return BPF_REDIRECT;
@@ -438,7 +438,7 @@ int do_encap_inline_3seg(struct __sk_buff *skb) {
 	lo = 0x3;
 	seg2->lo = htonll(lo);
 
-	int ret = skb_push_encap(skb, 1, (void *)srh, sizeof(srh_buf));
+	int ret = lwt_push_encap(skb, 1, (void *)srh, sizeof(srh_buf));
 	if (ret != 0)
 		return BPF_DROP;
 	return BPF_REDIRECT;

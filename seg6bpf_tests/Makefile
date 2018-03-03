@@ -1,6 +1,5 @@
-# Paths to clang 6.0svn
-CC = ~/llvm/build/bin/clang
-LLC = ~/llvm/build/bin/llc
+CC = clang
+LLC = llc
 
 SRCS = $(wildcard *.c)
 OBJS = $(patsubst %.c, %.o, $(SRCS))

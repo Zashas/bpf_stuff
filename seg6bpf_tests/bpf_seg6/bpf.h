@@ -130,10 +130,10 @@ enum bpf_prog_type {
 	BPF_PROG_TYPE_LWT_IN,
 	BPF_PROG_TYPE_LWT_OUT,
 	BPF_PROG_TYPE_LWT_XMIT,
-	BPF_PROG_TYPE_LWT_SEG6LOCAL,
 	BPF_PROG_TYPE_SOCK_OPS,
 	BPF_PROG_TYPE_SK_SKB,
 	BPF_PROG_TYPE_CGROUP_DEVICE,
+	BPF_PROG_TYPE_LWT_SEG6LOCAL,
 };
 
 enum bpf_attach_type {
@@ -759,10 +759,10 @@ union bpf_attr {
 	FN(getsockopt),			\
 	FN(override_return),		\
 	FN(sock_ops_cb_flags_set),  \
-   	FN(skb_push_encap),	\
-	FN(skb_seg6_store_bytes),	\
-	FN(skb_seg6_adjust_srh),	\
-	FN(skb_seg6_action),
+	FN(lwt_push_encap),	\
+	FN(lwt_seg6_store_bytes),	\
+	FN(lwt_seg6_adjust_srh),	\
+	FN(lwt_seg6_action),
 	
 /* integer value in 'imm' field of BPF_CALL instruction selects which helper
  * function eBPF program intends to call
@@ -817,6 +817,12 @@ enum bpf_func_id {
 /* Mode for BPF_FUNC_skb_adjust_room helper. */
 enum bpf_adj_room_mode {
 	BPF_ADJ_ROOM_NET,
+};
+
+/* Encapsulation type for BPF_FUNC_lwt_push_encap helper. */
+enum bpf_lwt_encap_mode {
+    BPF_LWT_ENCAP_SEG6,
+    BPF_LWT_ENCAP_SEG6_INLINE
 };
 
 /* user accessible mirror of in-kernel sk_buff.

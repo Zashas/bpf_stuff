@@ -240,10 +240,10 @@ static int BPF_FUNC(skb_seg6_encap_push, struct __sk_buff *skb, struct ip6_srh_t
 */
 
 
-static int BPF_FUNC(skb_push_encap, struct __sk_buff *skb, uint32_t type, void *hdr, uint32_t len);
-static int BPF_FUNC(skb_seg6_store_bytes, struct __sk_buff *skb, uint32_t offset, const void *from, uint32_t len);
-static int BPF_FUNC(skb_seg6_action, struct __sk_buff *skb, uint32_t action, void *param, uint32_t param_len);
-static int BPF_FUNC(skb_seg6_adjust_srh, struct __sk_buff *skb, uint32_t offset, int32_t len);
+static int BPF_FUNC(lwt_push_encap, struct __sk_buff *skb, uint32_t type, void *hdr, uint32_t len);
+static int BPF_FUNC(lwt_seg6_store_bytes, struct __sk_buff *skb, uint32_t offset, const void *from, uint32_t len);
+static int BPF_FUNC(lwt_seg6_action, struct __sk_buff *skb, uint32_t action, void *param, uint32_t param_len);
+static int BPF_FUNC(lwt_seg6_adjust_srh, struct __sk_buff *skb, uint32_t offset, int32_t len);
 
 /** LLVM built-ins, mem*() routines work for constant size */
 
