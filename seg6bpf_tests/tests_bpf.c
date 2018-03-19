@@ -1,5 +1,7 @@
 #include "bpf_seg6/all.h"
 
+#define EFAULT 14
+
 inline __attribute__((always_inline)) struct ip6_srh_t *get_srh(struct __sk_buff *skb) {
     uint8_t *ipver;
     void *data_end = (void *)(long)skb->data_end;
@@ -289,7 +291,7 @@ int do_push_encap(struct __sk_buff *skb) {
 	int ret = lwt_push_encap(skb, 0, (void *)srh, sizeof(srh_buf));
 	if (ret != 0)
 		return BPF_DROP;
-	return BPF_REDIRECT;
+	return BPF_OK;
 }
 
 __section("push_encap_wrong")
@@ -444,6 +446,73 @@ int do_encap_inline_3seg(struct __sk_buff *skb) {
 	return BPF_REDIRECT;
 }
 
+__section("wrong_stores")
+int do_wrong_stores(struct __sk_buff *skb) {
+	struct ip6_srh_t *srh = get_srh(skb);
+	if (srh == NULL)
+		return BPF_DROP;
+
+	char value = 42;
+	int offset, err;
+	offset = sizeof(struct ip6_t) - 4;
+	err = lwt_seg6_store_bytes(skb, offset, (void *) &value, sizeof(char));
+	if (err != -EFAULT)
+		return BPF_DROP;
+
+	offset = sizeof(struct ip6_t) + offsetof(struct ip6_srh_t, nexthdr);
+	for(int i=0; i < 5; i++) { // nexthdr to first_segment included
+		err = lwt_seg6_store_bytes(skb, offset, (void *) &value, sizeof(char));
+		if (err != -EFAULT)
+			return BPF_DROP;
+		offset++;
+	}
+
+	offset = sizeof(struct ip6_t) + sizeof(struct ip6_srh_t) + 10;
+	err = lwt_seg6_store_bytes(skb, offset, (void *) &value, sizeof(char));
+	if (err != -EFAULT)
+		return BPF_DROP;
+
+	offset = sizeof(struct ip6_t) + sizeof(struct ip6_srh_t) + 1000;
+	err = lwt_seg6_store_bytes(skb, offset, (void *) &value, sizeof(char));
+	if (err != -EFAULT)
+		return BPF_DROP;
+
+	return BPF_OK;
+}
+
+__section("wrong_adjusts")
+int do_wrong_adjusts(struct __sk_buff *skb) {
+	struct ip6_srh_t *srh = get_srh(skb);
+	if (srh == NULL)
+		return BPF_DROP;
+
+	int offset, err;
+	offset = sizeof(struct ip6_t) - 4;
+	err = lwt_seg6_adjust_srh(skb, offset, 4);
+	if (err != -EFAULT)
+		return BPF_DROP;
+
+	offset = sizeof(struct ip6_t) + offsetof(struct ip6_srh_t, nexthdr);
+	#pragma clang loop unroll(full)
+	for(int i=0; i < 40; i++) { // nexthdr to 2 segments included
+		err = lwt_seg6_adjust_srh(skb, offset, 4);
+		if (err != -EFAULT)
+			return BPF_DROP; 
+
+		offset++;
+	}
+	offset = sizeof(struct ip6_t) + sizeof(struct ip6_srh_t) + 32 + 30;
+	err = lwt_seg6_adjust_srh(skb, offset, -20);
+	if (err != -EFAULT)
+		return BPF_DROP;
+
+	offset = sizeof(struct ip6_t) + sizeof(struct ip6_srh_t) + 32 + 48;
+	err = lwt_seg6_adjust_srh(skb, offset, 4);
+	if (err != -EFAULT)
+		return BPF_DROP;
+
+	return BPF_OK;
+}
 
 
 char __license[] __section("license") = "GPL";

@@ -113,13 +113,16 @@ __attribute__((always_inline)) int add_tlv(struct __sk_buff *skb, struct ip6_srh
 		return 0;
 
 	int err = lwt_seg6_adjust_srh(skb, tlv_offset, sizeof(*itlv) + itlv->len);
-	if (err != 0)
+	if (err != 0) {
 		return 0;
+	}
+	printt("went through\n");
 
 	err = lwt_seg6_store_bytes(skb, tlv_offset, (void *)itlv, tlv_size);
 	if (err != 0)
 		return 0;
 
+	printt("went throug againh\n");
 	pad_offset += sizeof(*itlv) + itlv->len;
 	uint32_t partial_srh_len = pad_offset - srh_offset;
 	uint8_t len_remaining = partial_srh_len % 8;
@@ -155,6 +158,7 @@ __attribute__((always_inline)) int delete_tlv(struct __sk_buff *skb, struct ip6_
 		struct sr6_tlv tlv;
 		if (skb_load_bytes(skb, cur_off, &tlv, sizeof(tlv)))
 			return 0;
+
 		//printt("TLV type %d found at offset %d\n", tlv.type, cur_off);
 		
 		if (tlv.type == SR6_TLV_PADDING) {
@@ -186,6 +190,7 @@ __attribute__((always_inline)) int delete_tlv(struct __sk_buff *skb, struct ip6_
 		return 0;
 
 	int err = lwt_seg6_adjust_srh(skb, tlv_offset, -(sizeof(tlv) + tlv.len));
+	printt("err=%d off=%d len=%d\n",err, tlv_offset, -(sizeof(tlv) + tlv.len));
 	if (err != 0)
 		return 0;
 	
@@ -298,7 +303,6 @@ int do_add_ingr_mid(struct __sk_buff *skb) {
     tlv.value[0] = 0xfc;
     int ret = add_tlv(skb,srh, 8 + (srh->first_segment+1)*16 + 20, (struct sr6_tlv *)&tlv, 20);
     //printt("ret=%d\n",ret);
-
 
     return (ret) ? BPF_OK : BPF_DROP;
 }
