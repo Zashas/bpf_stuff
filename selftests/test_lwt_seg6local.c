@@ -1,224 +1,293 @@
-#include "bpf_seg6/all.h"
+#include <stddef.h>
+#include <inttypes.h>
+#include <errno.h>
+#include <linux/seg6_local.h>
+//#include <linux/bpf.h>
+#include "bpf_seg6/bpf.h" // TODO
+#include "bpf_helpers.h"
+#include "bpf_endian.h"
+
+#define bpf_printk(fmt, ...)				\
+({							\
+	char ____fmt[] = fmt;				\
+	bpf_trace_printk(____fmt, sizeof(____fmt),	\
+			##__VA_ARGS__);			\
+})
+
+
+/* Packet parsing state machine helpers. */
+#define cursor_advance(_cursor, _len) \
+	({ void *_tmp = _cursor; _cursor += _len; _tmp; })
+
+#define SR6_FLAG_ALERT (1 << 4)
+
+#define htonll(x) ((1 == bpf_htonl(1)) ? (x) : \
+		   ((uint64_t)bpf_htonl((x) & 0xFFFFFFFF) << 32) | bpf_htonl((x) >> 32))
+#define ntohll(x) ((1 == bpf_ntohl(1)) ? (x) : \
+		   ((uint64_t)bpf_ntohl((x) & 0xFFFFFFFF) << 32) | bpf_ntohl((x) >> 32))
+#define BPF_PACKET_HEADER __attribute__((packed))
+
+struct ip6_t {
+	unsigned int ver:4;
+	unsigned int priority:8;
+	unsigned int flow_label:20;
+	unsigned short payload_len;
+	unsigned char next_header;
+	unsigned char hop_limit;
+	unsigned long long src_hi;
+	unsigned long long src_lo;
+	unsigned long long dst_hi;
+	unsigned long long dst_lo;
+} BPF_PACKET_HEADER;
+
+struct ip6_addr_t {
+	unsigned long long hi;
+	unsigned long long lo;
+} BPF_PACKET_HEADER;
+
+struct ip6_srh_t {
+	unsigned char nexthdr;
+	unsigned char hdrlen;
+	unsigned char type;
+	unsigned char segments_left;
+	unsigned char first_segment;
+	unsigned char flags;
+	unsigned short tag;
+
+	struct ip6_addr_t segments[0];
+} BPF_PACKET_HEADER;
+
+struct sr6_tlv_t {
+	unsigned char type;
+	unsigned char len;
+	unsigned char value[0];
+} BPF_PACKET_HEADER;
 
 inline __attribute__((always_inline)) struct ip6_srh_t *get_srh(struct __sk_buff *skb) {
-    uint8_t *ipver;
-    void *data_end = (void *)(long)skb->data_end;
-    void *cursor   = (void *)(long)skb->data;
-    ipver = (uint8_t*) cursor;
+	void *cursor, *data_end;
+	uint8_t *ipver;
 
-    if ((void *)ipver + sizeof(*ipver) > data_end) // Check needed otherwise filter not accepted by the kernel
-        return NULL;
+	data_end = (void *)(long)skb->data_end;
+	cursor = (void *)(long)skb->data;
+	ipver = (uint8_t*) cursor;
 
-    if ((*ipver >> 4) != 6) // We only care about IPv6 packets
-        return NULL;
+	if ((void *)ipver + sizeof(*ipver) > data_end)
+		return NULL;
 
-    struct ip6_t *ip;
-    ip = cursor_advance(cursor, sizeof(*ip));
-    if ((void *)ip + sizeof(*ip) > data_end) 
-        return NULL;
+	if ((*ipver >> 4) != 6)
+		return NULL;
 
-    if (ip->next_header != 43) // We only care about IPv6 packets with the Routing header
-        return NULL;
+	struct ip6_t *ip;
+	ip = cursor_advance(cursor, sizeof(*ip));
 
-    struct ip6_srh_t *srh;
-    srh = cursor_advance(cursor, sizeof(*srh));
-    if ((void *)srh + sizeof(*srh) > data_end)
-        return NULL;
+	if ((void *)ip + sizeof(*ip) > data_end) 
+		return NULL;
 
-    if (srh->type != 4) // We only care about SRv6 packets
-        return NULL;
+	if (ip->next_header != 43)
+		return NULL;
 
-    return srh;
+	struct ip6_srh_t *srh;
+	srh = cursor_advance(cursor, sizeof(*srh));
+	if ((void *)srh + sizeof(*srh) > data_end)
+		return NULL;
+
+	if (srh->type != 4)
+		return NULL;
+
+	return srh;
 }
 
-__attribute__((always_inline)) int update_padding(struct __sk_buff *skb, uint32_t new_pad, uint32_t old_pad, uint32_t pad_off)
+__attribute__((always_inline))
+int update_tlv_pad(struct __sk_buff *skb, uint32_t new_pad,
+		   uint32_t old_pad, uint32_t pad_off)
 {
 	int err;
+
 	if (new_pad != old_pad) {
-		err = lwt_seg6_adjust_srh(skb, pad_off, (int) new_pad - (int) old_pad);
-		if (err != 0) {
-			return 0;
-		}
+		err = bpf_lwt_seg6_adjust_srh(skb, pad_off,
+					  (int) new_pad - (int) old_pad);
+		if (err)
+			return err;
 	}
+
 	if (new_pad > 0) {
-		char pad_tlv_buf[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-		struct sr6_tlv *pad_tlv = (struct sr6_tlv *) pad_tlv_buf;
+		char pad_tlv_buf[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+					0, 0, 0};
+		struct sr6_tlv_t *pad_tlv = (struct sr6_tlv_t *) pad_tlv_buf;
+
 		pad_tlv->type = SR6_TLV_PADDING;
 		pad_tlv->len = new_pad - 2;
 
-		err = lwt_seg6_store_bytes(skb, pad_off, (void *)pad_tlv_buf, new_pad);
-		if (err != 0)
-			return 0;
+		err = bpf_lwt_seg6_store_bytes(skb, pad_off, (void *)pad_tlv_buf,
+					   new_pad);
+		if (err)
+			return err;
 	}
-	return 1;
 
+	return 0;
 }
-__attribute__((always_inline)) int add_tlv(struct __sk_buff *skb, struct ip6_srh_t *srh, uint32_t tlv_offset, struct sr6_tlv *itlv, uint8_t tlv_size)
-{
-	uint32_t pad_size = 0;
-	uint32_t pad_offset = 0;
-	int srh_offset = (char *)srh - (char *)(long)skb->data;
-	if (tlv_offset != -1)
-		tlv_offset += srh_offset;
 
+__attribute__((always_inline))
+int is_valid_tlv_boundary(struct __sk_buff *skb, struct ip6_srh_t *srh,
+			  uint32_t *tlv_off, uint32_t *pad_size,
+			  uint32_t *pad_off)
+{
+	uint32_t srh_off, cur_off;
 	int offset_valid = 0;
+	int err;
+
+	srh_off = (char *)srh - (char *)(long)skb->data;
+	// cur_off = end of segments, start of possible TLVs
+	cur_off = srh_off + sizeof(*srh) +
+		sizeof(struct ip6_addr_t) * (srh->first_segment + 1);
+
+	*pad_off = 0;
+
+	// we can only go as far as 10 TLVs due to the BPF stack size
+	#pragma clang loop unroll(full)
+	for (int i = 0; i < 10; i++) {
+		struct sr6_tlv_t tlv;
+
+		if (cur_off == *tlv_off)
+			offset_valid = 1;
+
+		if (cur_off >= srh_off + ((srh->hdrlen + 1) << 3))
+			break;
+
+		err = bpf_skb_load_bytes(skb, cur_off, &tlv, sizeof(tlv));
+		if (err)
+			return err;
+
+		if (tlv.type == SR6_TLV_PADDING) {
+			*pad_size = tlv.len + sizeof(tlv);
+			*pad_off = cur_off;
+
+			if (*tlv_off == srh_off) {
+				*tlv_off = cur_off;
+				offset_valid = 1;
+			}
+			break;
+
+		} else if (tlv.type == SR6_TLV_HMAC) {
+			break;
+		}
+
+		cur_off += sizeof(tlv) + tlv.len;
+	} // we reached the padding or HMAC TLVs, or the end of the SRH
+
+	if (*pad_off == 0)
+		*pad_off = cur_off;
+
+	if (*tlv_off == -1)
+		*tlv_off = cur_off;
+	else if (!offset_valid)
+		return -EINVAL;
+
+	return 0;
+}
+
+__attribute__((always_inline))
+int add_tlv(struct __sk_buff *skb, struct ip6_srh_t *srh, uint32_t tlv_off,
+	    struct sr6_tlv_t *itlv, uint8_t tlv_size)
+{
+	uint32_t srh_off = (char *)srh - (char *)(long)skb->data;
+	uint8_t len_remaining, new_pad;
+	uint32_t pad_off = 0;
+	uint32_t pad_size = 0;
+	uint32_t partial_srh_len;
+	int err;
+
+	if (tlv_off != -1)
+		tlv_off += srh_off;
 
 	if (itlv->type == SR6_TLV_PADDING || itlv->type == SR6_TLV_HMAC)
-		return 0;
+		return -EINVAL;
 
-	// cur_off = end of segments, start of possible TLVs
-	int cur_off = srh_offset + sizeof(*srh) + sizeof(struct in6_addr) * (srh->first_segment + 1);
+	err = is_valid_tlv_boundary(skb, srh, &tlv_off, &pad_size, &pad_off);
+	if (err)
+		return err;
 
-	#pragma clang loop unroll(full)
-	for(int i=0; i < 10; i++) { // TODO limitation
-		if (cur_off == tlv_offset)
-			offset_valid = 1;
+	err = bpf_lwt_seg6_adjust_srh(skb, tlv_off, sizeof(*itlv) + itlv->len);
+	if (err)
+		return err;
 
-		if (cur_off >= srh_offset + ((srh->hdrlen + 1) << 3))
-			break;
+	err = bpf_lwt_seg6_store_bytes(skb, tlv_off, (void *)itlv, tlv_size);
+	if (err)
+		return err;
 
-		struct sr6_tlv tlv;
-		if (skb_load_bytes(skb, cur_off, &tlv, sizeof(tlv)))
-			return 0;
-		
-		if (tlv.type == SR6_TLV_PADDING) {
-			pad_size = tlv.len + sizeof(tlv);
-			pad_offset = cur_off;
-			
-			if (tlv_offset == srh_offset) {
-				tlv_offset = cur_off;
-				offset_valid = 1;
-			}
-			break;
-			
-		} else if (tlv.type == SR6_TLV_HMAC) {
-			break; // TODO consider this end of pkt
-		}
+	pad_off += sizeof(*itlv) + itlv->len;
+	partial_srh_len = pad_off - srh_off;
+	len_remaining = partial_srh_len % 8;
+	new_pad = 8 - len_remaining;
 
-		cur_off += sizeof(tlv) + tlv.len;
-	}
-	if (pad_offset == 0)
-		pad_offset = cur_off;
-
-	if (tlv_offset == -1)
-		tlv_offset = cur_off;
-	else if (!offset_valid)
-		return 0;
-
-	int err = lwt_seg6_adjust_srh(skb, tlv_offset, sizeof(*itlv) + itlv->len);
-	if (err != 0) {
-		return 0;
-	}
-
-	err = lwt_seg6_store_bytes(skb, tlv_offset, (void *)itlv, tlv_size);
-	if (err != 0)
-		return 0;
-
-	pad_offset += sizeof(*itlv) + itlv->len;
-	uint32_t partial_srh_len = pad_offset - srh_offset;
-	uint8_t len_remaining = partial_srh_len % 8;
-	uint8_t new_pad = 8 - len_remaining;
 	if (new_pad == 1) // cannot pad for 1 byte only
 		new_pad = 9;
 	else if (new_pad == 8)
 		new_pad = 0;
 
-	return update_padding(skb, new_pad, pad_size, pad_offset);
+	return update_tlv_pad(skb, new_pad, pad_size, pad_off);
 }
 
-__attribute__((always_inline)) int delete_tlv(struct __sk_buff *skb, struct ip6_srh_t *srh, uint32_t tlv_offset)
+__attribute__((always_inline))
+int delete_tlv(struct __sk_buff *skb, struct ip6_srh_t *srh,
+	       uint32_t tlv_off)
 {
+	uint32_t srh_off = (char *)srh - (char *)(long)skb->data;
+	uint8_t len_remaining, new_pad;
+	uint32_t partial_srh_len;
+	uint32_t pad_off = 0;
 	uint32_t pad_size = 0;
-	uint32_t pad_offset = 0;
-	int srh_offset = (char *)srh - (char *)(long)skb->data;
-	tlv_offset += srh_offset;
+	struct sr6_tlv_t tlv;
+	int err;
 
-	int offset_valid = 0;
+	tlv_off += srh_off;
 
-	// cur_off = end of segments, start of possible TLVs
-	int cur_off = srh_offset + sizeof(*srh) + sizeof(struct in6_addr) * (srh->first_segment + 1);
+	err = is_valid_tlv_boundary(skb, srh, &tlv_off, &pad_size, &pad_off);
+	if (err)
+		return err;
 
-	#pragma clang loop unroll(full)
-	for(int i=0; i < 10; i++) { // TODO limitation
-		if (cur_off == tlv_offset)
-			offset_valid = 1;
+	err = bpf_skb_load_bytes(skb, tlv_off, &tlv, sizeof(tlv));
+	if (err)
+		return err;
 
-		if (cur_off >= srh_offset + ((srh->hdrlen + 1) << 3))
-			break;
+	err = bpf_lwt_seg6_adjust_srh(skb, tlv_off, -(sizeof(tlv) + tlv.len));
+	if (err)
+		return err;
 
-		struct sr6_tlv tlv;
-		if (skb_load_bytes(skb, cur_off, &tlv, sizeof(tlv)))
-			return 0;
-
-		//printt("TLV type %d found at offset %d\n", tlv.type, cur_off);
-		
-		if (tlv.type == SR6_TLV_PADDING) {
-			pad_size = tlv.len + sizeof(tlv);
-			pad_offset = cur_off;
-			
-			if (tlv_offset == srh_offset) {
-				tlv_offset = cur_off;
-				offset_valid = 1;
-			}
-			break;
-			
-		} else if (tlv.type == SR6_TLV_HMAC) {
-			break; // TODO consider this end of pkt
-		}
-
-		cur_off += sizeof(tlv) + tlv.len;
-	}
-	if (pad_offset == 0)
-		pad_offset = cur_off;
-
-	if (tlv_offset == -1)
-		tlv_offset = cur_off;
-	else if (!offset_valid)
-		return 0;
-
-	struct sr6_tlv tlv;
-	if (skb_load_bytes(skb, tlv_offset, &tlv, sizeof(tlv)))
-		return 0;
-
-	int err = lwt_seg6_adjust_srh(skb, tlv_offset, -(sizeof(tlv) + tlv.len));
-	if (err != 0)
-		return 0;
-	
-	pad_offset -= sizeof(tlv) + tlv.len;
-	uint32_t partial_srh_len = pad_offset - srh_offset;
-	uint8_t len_remaining = partial_srh_len % 8;
-	uint8_t new_pad = 8 - len_remaining;
+	pad_off -= sizeof(tlv) + tlv.len;
+	partial_srh_len = pad_off - srh_off;
+	len_remaining = partial_srh_len % 8;
+	new_pad = 8 - len_remaining;
 	if (new_pad == 1) // cannot pad for 1 byte only
 		new_pad = 9;
 	else if (new_pad == 8)
 		new_pad = 0;
 
-	return update_padding(skb, new_pad, pad_size, pad_offset);
+	return update_tlv_pad(skb, new_pad, pad_size, pad_off);
 }
 
 static __attribute__((always_inline)) int has_egr_tlv(struct __sk_buff *skb, struct ip6_srh_t *srh) {
-	int srh_offset = (char *)srh - (char *)(long)skb->data;
-	int tlv_offset = srh_offset + ((srh->first_segment + 1) << 4);
+       int tlv_offset = sizeof(struct ip6_t) + sizeof(struct ip6_srh_t) + ((srh->first_segment + 1) << 4);
 
-	struct sr6_tlv_128 tlv;
-	if (bpf_skb_load_bytes(skb, tlv_offset, &tlv, sizeof(struct sr6_tlv)))
-		return 0;
-	
-	if (tlv.type == SR6_TLV_EGRESS && tlv.len == 18) {
-		int tlv_payload_offset = tlv_offset + sizeof(struct sr6_tlv);
-		if (bpf_skb_load_bytes(skb, cur_off+2, tlv.value, 16))
-			return 0;
+       struct sr6_tlv_t tlv;
+       if (bpf_skb_load_bytes(skb, tlv_offset, &tlv, sizeof(struct sr6_tlv_t)))
+               return 0;
 
-		if (tlv.value[0] == 0xfc00 && tlv.value[15] == 0x4) // got correct egress TLV
-			return 1
-		else
-			return 0;
-	}
+       if (tlv.type == SR6_TLV_EGRESS && tlv.len == 18) {
+	       struct ip6_addr_t egr_addr;
+               if (bpf_skb_load_bytes(skb, tlv_offset + 4, &egr_addr, 16))
+                       return 0;
+
+               if (ntohll(egr_addr.hi) == 0xfd00000000000000 && ntohll(egr_addr.lo) == 0x4) // got correct egress TLV
+                       return 1;
+       }
+
+       return 0;
 }
 
 // This function will push a SRH with segments fc00::1, fc00::2, fc00::3,
 // fc00::4
-__section("encap_srh")
+SEC("encap_srh")
 int __encap_srh(struct __sk_buff *skb) {
 	char srh_buf[72]; // room for 4 segments
 	struct ip6_srh_t *srh = (struct ip6_srh_t *)srh_buf;
@@ -230,28 +299,28 @@ int __encap_srh(struct __sk_buff *skb) {
 	srh->flags = 0;
 	srh->tag = 0;
 
-	struct ip6_addr *seg0 = (struct ip6_addr *)((char*) srh + sizeof(*srh));
-	struct ip6_addr *seg1 = (struct ip6_addr *)((char*) seg0 + sizeof(*seg0));
-	struct ip6_addr *seg2 = (struct ip6_addr *)((char*) seg1 + sizeof(*seg1));
-	struct ip6_addr *seg3 = (struct ip6_addr *)((char*) seg2 + sizeof(*seg2));
-	unsigned long long hi = 0xfc00000000000000;
-	unsigned long long lo = 0x1;
+	struct ip6_addr_t *seg0 = (struct ip6_addr_t *)((char*) srh + sizeof(*srh));
+	struct ip6_addr_t *seg1 = (struct ip6_addr_t *)((char*) seg0 + sizeof(*seg0));
+	struct ip6_addr_t *seg2 = (struct ip6_addr_t *)((char*) seg1 + sizeof(*seg1));
+	struct ip6_addr_t *seg3 = (struct ip6_addr_t *)((char*) seg2 + sizeof(*seg2));
+	unsigned long long hi = 0xfd00000000000000;
+	unsigned long long lo = 0x4;
 	seg0->lo = htonll(lo);
 	seg0->hi = htonll(hi);
 
 	seg1->hi = seg0->hi;
-	lo = 0x2;
+	lo = 0x3;
 	seg1->lo = htonll(lo);
 
 	seg2->hi = seg0->hi;
-	lo = 0x3;
+	lo = 0x2;
 	seg2->lo = htonll(lo);
 
 	seg3->hi = seg0->hi;
-	lo = 0x4;
+	lo = 0x1;
 	seg3->lo = htonll(lo);
 
-	int ret = lwt_push_encap(skb, 0, (void *)srh, sizeof(srh_buf));
+	int ret = bpf_lwt_push_encap(skb, 0, (void *)srh, sizeof(srh_buf));
 	if (ret != 0)
 		return BPF_DROP;
 	return BPF_REDIRECT;
@@ -259,43 +328,46 @@ int __encap_srh(struct __sk_buff *skb) {
 
 // Add an Egress TLV fc00::4, add the flag A,
 // and apply End.X action to fc00::42
-__section("add_egr_x")
+SEC("add_egr_x")
 int __add_egr_x(struct __sk_buff *skb) {
+	int err;
 	struct ip6_srh_t *srh = get_srh(skb);
 	if (srh == NULL)
 		return BPF_DROP;
 
-	struct sr6_tlv_128 tlv;
-	tlv.type = 2;
+	uint8_t tlv[20] = {2, 18, 0, 0, 0xfd, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+		           0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x4};
+	/*tlv.type = 2;
 	tlv.len = 18;
 	tlv.flags = 0;
 	tlv.reserved = 0;
-	memset(tlv.value, 0, 16);
+	__builtin_memset(tlv.value, 0, 16);
 	tlv.value[15] = 4;
-	tlv.value[0] = 0xfc;
-	int ok = add_tlv(skb, srh, (srh->hdrlen+1) << 3, (struct sr6_tlv *)&tlv, 20);
-	if (!ok)
+	tlv.value[0] = 0xfd;
+	int ok = add_tlv(skb, srh, (srh->hdrlen+1) << 3, (struct sr6_tlv_t *)&tlv, 20);*/
+	err = add_tlv(skb, srh, (srh->hdrlen+1) << 3, (struct sr6_tlv_t *)&tlv, 20);
+	if (err)
 		return BPF_DROP;
 
 	uint8_t flags = SR6_FLAG_ALERT;
 	int offset = sizeof(struct ip6_t) + offsetof(struct ip6_srh_t, flags);
-	int err = lwt_seg6_store_bytes(skb, offset, (void *) &flags, sizeof(flags));
+	err = bpf_lwt_seg6_store_bytes(skb, offset, (void *) &flags, sizeof(flags));
 	if (err)
 		return BPF_DROP;
 
-	struct ip6_addr addr;
-	unsigned long long hi = 0xfc00;
-	unsigned long long lo = 0x42;
+	struct ip6_addr_t addr;
+	unsigned long long hi = 0xfc42000000000000;
+	unsigned long long lo = 0x1;
 	addr.lo = htonll(lo);
 	addr.hi = htonll(hi);
-	err = lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_X, (void *)&addr,sizeof(addr)); // End.X to fc00::14
+	err = bpf_lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_X, (void *)&addr,sizeof(addr)); // End.X to fc00::14
 	if (err)
 		return BPF_DROP;
 	return BPF_REDIRECT;
 }
 
-__section("pop_egr_t")
-int __pop_egr_t(struct __sk_buff *skb) {
+SEC("pop_egr")
+int __pop_egr(struct __sk_buff *skb) {
 	struct ip6_srh_t *srh = get_srh(skb);
 	if (srh == NULL)
 		return BPF_DROP;
@@ -303,37 +375,31 @@ int __pop_egr_t(struct __sk_buff *skb) {
 	if (srh->flags != SR6_FLAG_ALERT)
 		return BPF_DROP;
 
-	uint8_t flags = 0;
-	int offset = sizeof(struct ip6_t) + offsetof(struct ip6_srh_t, flags);
-	if (lwt_seg6_store_bytes(skb, offset, (void *) &flags, sizeof(flags)));
-		return BPF_DROP;
-
-	uint16_t tag = 2442;
-	offset = sizeof(struct ip6_t) + offsetof(struct ip6_srh_t, tag);
-	if (lwt_seg6_store_bytes(skb, offset, (void *) &tag, sizeof(tag)));
-		return BPF_DROP;
-
 	if (srh->hdrlen != 11) // 4 segments + Egress TLV + Padding TLV
 		return BPF_DROP;
 
-	if (!has_egr_tlv(skb srh))
+	if (!has_egr_tlv(skb, srh))
 		return BPF_DROP;
 
-	int ok = delete_tlv(skb, srh, 8+(srh->first_segment+1)*16);
-	if (!ok)
-		return BPF_DROP;
-	return (ret) ? BPF_OK : BPF_DROP;
-
-	int table = 42;
-	err = lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_T, (void *)&table, sizeof(table));
+	int err = delete_tlv(skb, srh, 8+(srh->first_segment+1)*16);
 	if (err)
 		return BPF_DROP;
 
-	return BPF_REDIRECT;
+	uint8_t flags = 0;
+	int offset = sizeof(struct ip6_t) + offsetof(struct ip6_srh_t, flags);
+	if (bpf_lwt_seg6_store_bytes(skb, offset, (void *) &flags, sizeof(flags)))
+		return BPF_DROP;
+
+	uint16_t tag = bpf_htons(2442);
+	offset = sizeof(struct ip6_t) + offsetof(struct ip6_srh_t, tag);
+	if (bpf_lwt_seg6_store_bytes(skb, offset, (void *) &tag, sizeof(tag)))
+		return BPF_DROP;
+
+	return BPF_OK;
 }
 
-__section("inspect_ok")
-int __inspect_ok(struct __sk_buff *skb)
+SEC("inspect_t")
+int __inspect_t(struct __sk_buff *skb)
 {
 	struct ip6_srh_t *srh = get_srh(skb);
 	if (srh == NULL)
@@ -342,13 +408,20 @@ int __inspect_ok(struct __sk_buff *skb)
 	if (srh->flags != 0)
 		return BPF_DROP;
 
-	if (srh->tag != 2442)
+	if (srh->tag != bpf_htons(2442))
 		return BPF_DROP;
 
 	if (srh->hdrlen != 8) // 4 segments
 		return BPF_DROP;
 
-	return BPF_OK;
+	return BPF_OK; // TODO
+	int table = 117;
+	int err = bpf_lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_T, (void *)&table, sizeof(table));
+	bpf_printk("action err=%d\n", err);
+	if (err)
+		return BPF_DROP;
+
+	return BPF_REDIRECT;
 }
 
-char __license[] __section("license") = "GPL";
+char __license[] SEC("license") = "GPL";

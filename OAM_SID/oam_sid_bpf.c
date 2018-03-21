@@ -96,8 +96,8 @@ int OAM_SID(struct __sk_buff *skb) {
 	struct ip6_srh_t *srh = get_srh(skb);
 	if (!srh)
 		return BPF_DROP;
-	if (srh->flags & SR6_FLAG_OAM) // OAM flag set, look for an OAM TLV
-		find_oam_tlv(skb, srh);
+	//if (srh->flags & SR6_FLAG_OAM) // OAM flag set, look for an OAM TLV
+	//	find_oam_tlv(skb, srh);
 	return BPF_OK;
 }
 

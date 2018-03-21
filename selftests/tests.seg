@@ -1,0 +1,30 @@
+`/home/math/shared/iproute2/ip/ip -6 route add fb00::/16 encap bpf in obj
+test_lwt_seg6local.o section encap_srh dev dum0`
+
+if add dum1
+`ip -6 route add fc42::1 dev dum1`
+
+`/home/math/shared/iproute2/ip/ip -6 route add fd00::1 encap seg6local action
+End.BPF obj test_lwt_seg6local.o section add_egr_x dev dum0`
+
+`/home/math/shared/iproute2/ip/ip -6 route add fd00::2 encap seg6local action
+End.BPF obj test_lwt_seg6local.o section pop_egr dev dum0`
+
+`/home/math/shared/iproute2/ip/ip -6 route add fd00::3 encap seg6local action
+End.BPF obj test_lwt_seg6local.o section inspect_t dev dum0`
+
+`/home/math/shared/iproute2/ip/ip -6 route add fd00::4 table 117 encap seg6local action End dev dum0`
+`/home/math/shared/iproute2/ip/ip -6 route add fd00::4 dev dum1`
+
+`/home/math/shared/iproute2/ip/ip -6 route`
+> fb00::1 -> fb00::2 / UDP(1489, 1737) / "My ASCII payload"
+< fd00::42 -> fd00::1 / [fd00::4,fd00::3,fd00::2,+fd00::1] <sl 3,le 3> / fb00::1 -> fb00::2 / UDP(1489,1737) / "My ASCII payload"
+
+> fd00::42 -> fd00::1 / [fd00::4,fd00::3,fd00::2,+fd00::1] <sl 3,le 3> / fb00::1 -> fb00::2 / UDP(1489,1737) / "My ASCII payload"
+< (dum1) fd00::42 -> fd00::2 / [fd00::4,fd00::3,+fd00::2,fd00::1] <sl 2,le 3,fl A> {Egr: fd00::4} {Pad: 2} / fb00::1 -> fb00::2 / UDP(1489,1737) / "My ASCII payload"
+
+> fd00::42 -> fd00::2 / [fd00::4,fc00::3,+fd00::2,fd00::1] <fl A> {Egr: fd00::4} {Pad: 2} / fb00::1 -> fb00::2 / UDP(1489,1737) / "My ASCII payload"
+< fd00::42 -> fc00::3 / [fd00::4,+fc00::3,fd00::2,fd00::1] <tag 2442> / fb00::1 -> fb00::2 / UDP(1489,1737) / "My ASCII payload"
+
+> fd00::42 -> fd00::3 / [fd00::4,+fd00::3,fd00::2,fd00::1] <tag 2442> / fb00::1 -> fb00::2 / UDP(1489,1737) / "My ASCII payload"
+< (dum1) fd00::42 -> fd00::4 / [+fd00::4,fd00::3,fd00::2,fd00::1] <tag 2442> / fb00::1 -> fb00::2 / UDP(1489,1737) / "My ASCII payload"
