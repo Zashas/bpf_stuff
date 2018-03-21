@@ -76,7 +76,9 @@ int do_end_x(struct __sk_buff *skb) {
 	unsigned long long lo = 0x1;
 	addr.lo = htonll(lo);
 	addr.hi = htonll(hi);
-	lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_X, (void *)&addr,sizeof(addr)); // End.X to fc00::14
+	int err = lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_X, (void *)&addr,sizeof(addr)); // End.X to fc00::14
+	if (err)
+		return BPF_DROP;
 	return BPF_REDIRECT;
 }
 
@@ -84,7 +86,10 @@ __section("end_t")
 int do_end_t(struct __sk_buff *skb)
 {
 	int table = 42;
-	lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_T, (void *)&table, sizeof(table));
+	int err = lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_T, (void *)&table, sizeof(table));
+	if (err)
+		return BPF_DROP;
+
 	return BPF_REDIRECT;
 }
 
@@ -409,7 +414,7 @@ int do_long_encap_inline(struct __sk_buff *skb) {
 	int ret = lwt_push_encap(skb, 1, (void *)srh, sizeof(srh_buf));
 	if (ret != 0)
 		return BPF_DROP;
-	return BPF_REDIRECT;
+	return BPF_OK;
 }
 
 __section("encap_inline_3seg")
@@ -514,5 +519,19 @@ int do_wrong_adjusts(struct __sk_buff *skb) {
 	return BPF_OK;
 }
 
+__section("access_cb")
+int do_access_cb(struct __sk_buff *skb) {
+	int sum = 0;
+
+	for(int i=0; i < 5; i++) {
+		sum += skb->cb[i]; // This is invalid
+		skb->cb[i] = 4; // as writing
+	}
+
+
+	if (sum)
+		return BPF_OK;
+	return BPF_DROP;
+}
 
 char __license[] __section("license") = "GPL";
