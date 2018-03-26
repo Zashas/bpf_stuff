@@ -1,0 +1,21 @@
+`./oam_ecmp.py fd00::beef/128 dum0`
+
+if add dum1
+if add dum2
+`ip -6 route add dead:beef::8 nexthop via fc00::7 dev dum0`
+`ip -6 route add dead:beef::42 nexthop via fc00::0 dev dum0 nexthop via fc00::1 dev dum0 nexthop via fc00::2 dev dum0`
+
+`sleep 1`
+
+> dead::42 -> fd00::beef / [baba::1, fc00::1337, +fd00::beef, fab1::49] <fl O> {Opaq: 02010000000000000000000000000000} {Opaq: deadbeef000000000000000000000008} / UDP(18572, 142) / "A payload"
+< dead::42 -> fc00::1337 / [baba::1, +fc00::1337, fd00::beef, fab1::49] <fl O> {Opaq: 02010000000000000000000000000000} {Opaq: deadbeef000000000000000000000008} / UDP(18572, 142) / "A payload"
+
+> dead::42 -> fd00::beef / [baba::1, fc00::1337, +fd00::beef, fab1::49] <fl O> {Opaq: 02010000000000000000000000000000} {Opaq: deadbeef000000000000000000000042} / UDP(18572, 142) / "A payload"
+< dead::42 -> fc00::1337 / [baba::1, +fc00::1337, fd00::beef, fab1::49] <fl O> {Opaq: 02010000000000000000000000000000} {Opaq: deadbeef000000000000000000000042} / UDP(18572, 142) / "A payload"
+
+> dead::42 -> fd00::beef / [baba::1, fc00::1337, +fd00::beef, fab1::49] <fl O> {Opaq: 02010000000000000000000000000000} {Opaq: deadbeef000000000000000000000010} / UDP(18572, 142) / "A payload"
+< dead::42 -> fc00::1337 / [baba::1, +fc00::1337, fd00::beef, fab1::49] <fl O> {Opaq: 02010000000000000000000000000000} {Opaq: deadbeef000000000000000000000010} / UDP(18572, 142) / "A payload"
+
+
+`sleep 1`
+`pkill -F /tmp/oam_ecmp_fd00::beef-128.pid`
