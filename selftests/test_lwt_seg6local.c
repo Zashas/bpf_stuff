@@ -80,7 +80,6 @@ __attribute__((always_inline)) struct ip6_srh_t *get_srh(struct __sk_buff *skb)
 		return NULL;
 
 	ip = cursor_advance(cursor, sizeof(*ip));
-
 	if ((void *)ip + sizeof(*ip) > data_end)
 		return NULL;
 
@@ -143,7 +142,7 @@ int is_valid_tlv_boundary(struct __sk_buff *skb, struct ip6_srh_t *srh,
 
 	*pad_off = 0;
 
-	// we can only go as far as 10 TLVs due to the BPF stack size
+	// we can only go as far as ~10 TLVs due to the BPF max stack size
 	#pragma clang loop unroll(full)
 	for (int i = 0; i < 10; i++) {
 		struct sr6_tlv_t tlv;
@@ -215,6 +214,8 @@ int add_tlv(struct __sk_buff *skb, struct ip6_srh_t *srh, uint32_t tlv_off,
 	if (err)
 		return err;
 
+	// the following can't be moved inside update_tlv_pad because the
+	// bpf verifier has some issues with it
 	pad_off += sizeof(*itlv) + itlv->len;
 	partial_srh_len = pad_off - srh_off;
 	len_remaining = partial_srh_len % 8;
@@ -365,6 +366,8 @@ int __add_egr_x(struct __sk_buff *skb)
 	return BPF_REDIRECT;
 }
 
+// Pop the Egress TLV, reset the flags, change the tag 2442 and finally do a
+// simple End action
 SEC("pop_egr")
 int __pop_egr(struct __sk_buff *skb)
 {
@@ -402,6 +405,8 @@ int __pop_egr(struct __sk_buff *skb)
 	return BPF_OK;
 }
 
+// Inspect if the Egress TLV and flag have been removed, if the tag is correct,
+// then apply a End.T action to reach the last segment
 SEC("inspect_t")
 int __inspect_t(struct __sk_buff *skb)
 {

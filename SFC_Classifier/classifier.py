@@ -39,9 +39,9 @@ def print_skb_event(cpu, data, size):
             dport = socket.ntohs(p[3] << 8 | p[2])
             args = "({}, {})".format(sport, dport)
 
-        logger.info("Dropped IPv6 pkt : {} -> {} / {} {}".format(src_ip, dst_ip, proto,args))
+        logger.info("Dropped IPv6 pkt #{}: {} -> {} / {} {}".format(skb_event.id, src_ip, dst_ip, proto,args))
     else:
-        logger.info("Dropped non-IPv6 pkt")
+        logger.info("Dropped non-IPv6 pkt #{}".format(skb_event.id))
 
 def install_rt(bpf_file):
     b = BPF(src_file=bpf_file)

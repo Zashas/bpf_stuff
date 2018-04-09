@@ -133,6 +133,7 @@ enum bpf_prog_type {
 	BPF_PROG_TYPE_SOCK_OPS,
 	BPF_PROG_TYPE_SK_SKB,
 	BPF_PROG_TYPE_CGROUP_DEVICE,
+	BPF_PROG_TYPE_SK_MSG,
 	BPF_PROG_TYPE_LWT_SEG6LOCAL,
 };
 
@@ -144,6 +145,7 @@ enum bpf_attach_type {
 	BPF_SK_SKB_STREAM_PARSER,
 	BPF_SK_SKB_STREAM_VERDICT,
 	BPF_CGROUP_DEVICE,
+	BPF_SK_MSG_VERDICT,
 	__MAX_BPF_ATTACH_TYPE
 };
 
@@ -231,6 +233,28 @@ enum bpf_attach_type {
 /* Flags for accessing BPF object */
 #define BPF_F_RDONLY		(1U << 3)
 #define BPF_F_WRONLY		(1U << 4)
+
+/* Flag for stack_map, store build_id+offset instead of pointer */
+#define BPF_F_STACK_BUILD_ID	(1U << 5)
+
+enum bpf_stack_build_id_status {
+	/* user space need an empty entry to identify end of a trace */
+	BPF_STACK_BUILD_ID_EMPTY = 0,
+	/* with valid build_id and offset */
+	BPF_STACK_BUILD_ID_VALID = 1,
+	/* couldn't get build_id, fallback to ip */
+	BPF_STACK_BUILD_ID_IP = 2,
+};
+
+#define BPF_BUILD_ID_SIZE 20
+struct bpf_stack_build_id {
+	__s32		status;
+	unsigned char	build_id[BPF_BUILD_ID_SIZE];
+	union {
+		__u64	offset;
+		__u64	ip;
+	};
+};
 
 union bpf_attr {
 	struct { /* anonymous struct used by BPF_MAP_CREATE command */
@@ -697,6 +721,59 @@ union bpf_attr {
  * int bpf_override_return(pt_regs, rc)
  *	@pt_regs: pointer to struct pt_regs
  *	@rc: the return value to set
+ *
+ * int bpf_msg_redirect_map(map, key, flags)
+ *     Redirect msg to a sock in map using key as a lookup key for the
+ *     sock in map.
+ *     @map: pointer to sockmap
+ *     @key: key to lookup sock in map
+ *     @flags: reserved for future use
+ *     Return: SK_PASS
+ *
+ * int lwt_push_encap(skb, type, hdr, len)
+ *     Push an encapsulation header on top of current packet.
+ *     @type: type of header to push :
+ *          - BPF_LWT_ENCAP_SEG6 (push an IPv6 Segment Routing Header, struct
+ *                    ipv6_sr_hdr, the helper will add the outer IPv6 header)
+ *          - BPF_LWT_ENCAP_SEG6_INLINE (push an IPv6 Segment Routing Header,
+ *                       struct ipv6_sr_hdr, inside the existing IPv6 header)
+ *     @hdr: pointer where to copy the header from
+ *     @len: size of hdr in bytes
+ *     Return: 0 on success or negative error
+ *
+ * int lwt_seg6_store_bytes(skb, offset, from, len)
+ *     Store bytes into the outermost Segment Routing header of an IPv6 header.
+ *     Only the flags, tag and TLVs can be modified.
+ *     @skb: pointer to skb
+ *     @offset: offset within packet from skb->data
+ *     @from: pointer where to copy bytes from
+ *     @len: number of bytes to store into packet
+ *     Return: 0 on success or negative error
+ *
+ * int lwt_seg6_adjust_srh(skb, offset, delta)
+ *     Adjust the size allocated to TLVs in the outermost IPv6 Segment Routing
+ *     Header (grow if delta > 0, else shrink)
+ *     @skb: pointer to skb
+ *     @offset: offset within packet from skb->data where SRH will grow/shrink,
+ *              only offsets after the segments are accepted
+ *     @delta: a positive/negative integer
+ *     Return: 0 on success or negative on error
+ *
+ * int lwt_seg6_action(skb, action, param, param_len)
+ *     Apply a IPv6 Segment Routing action on a packet with an IPv6 Segment
+ *     Routing Header.
+ *     @action:
+ *              - End.X: SEG6_LOCAL_ACTION_END_X
+ *                                           (type of param: struct in6_addr)
+ *              - End.T: SEG6_LOCAL_ACTION_END_T
+ *                                           (type of param: int)
+ *              - End.B6: SEG6_LOCAL_ACTION_END_B6
+ *                                           (type of param: struct ipv6_sr_hdr)
+ *              - End.B6.Encap: SEG6_LOCAL_ACTION_END_B6_ENCAP
+ *                                           (type of param: struct ipv6_sr_hdr)
+ *     @param: pointer to the parameter required by the action
+ *     @param_len: length of param in bytes
+ *     Return: 0 on success or negative error
  */
 #define __BPF_FUNC_MAPPER(FN)		\
 	FN(unspec),			\
@@ -758,12 +835,16 @@ union bpf_attr {
 	FN(perf_prog_read_value),	\
 	FN(getsockopt),			\
 	FN(override_return),		\
-	FN(sock_ops_cb_flags_set),  \
-	FN(lwt_push_encap),	\
+	FN(sock_ops_cb_flags_set),	\
+	FN(msg_redirect_map),		\
+	FN(msg_apply_bytes),		\
+	FN(msg_cork_bytes),		\
+	FN(msg_pull_data),      \
+	FN(lwt_push_encap),		\
 	FN(lwt_seg6_store_bytes),	\
 	FN(lwt_seg6_adjust_srh),	\
 	FN(lwt_seg6_action),
-	
+
 /* integer value in 'imm' field of BPF_CALL instruction selects which helper
  * function eBPF program intends to call
  */
@@ -805,6 +886,7 @@ enum bpf_func_id {
 /* BPF_FUNC_skb_set_tunnel_key flags. */
 #define BPF_F_ZERO_CSUM_TX		(1ULL << 1)
 #define BPF_F_DONT_FRAGMENT		(1ULL << 2)
+#define BPF_F_SEQ_NUMBER		(1ULL << 3)
 
 /* BPF_FUNC_perf_event_output, BPF_FUNC_perf_event_read and
  * BPF_FUNC_perf_event_read_value flags.
@@ -821,8 +903,8 @@ enum bpf_adj_room_mode {
 
 /* Encapsulation type for BPF_FUNC_lwt_push_encap helper. */
 enum bpf_lwt_encap_mode {
-    BPF_LWT_ENCAP_SEG6,
-    BPF_LWT_ENCAP_SEG6_INLINE
+	BPF_LWT_ENCAP_SEG6,
+	BPF_LWT_ENCAP_SEG6_INLINE
 };
 
 /* user accessible mirror of in-kernel sk_buff.
@@ -928,6 +1010,14 @@ struct xdp_md {
 enum sk_action {
 	SK_DROP = 0,
 	SK_PASS,
+};
+
+/* user accessible metadata for SK_MSG packet hook, new fields must
+ * be added to the end of this structure
+ */
+struct sk_msg_md {
+	void *data;
+	void *data_end;
 };
 
 #define BPF_TAG_SIZE	8

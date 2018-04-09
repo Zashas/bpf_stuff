@@ -1,10 +1,18 @@
 #include "proto.h"
 #include "libseg6.c"
 
-#define SR6_TLV_DM 0x20
+#define SR6_TLV_DM 7
 #define SR6_TLV_URO 131
 
-struct sr6_tlv_t_dm {
+BPF_ARRAY(clock_diff, u32, 2);
+BPF_PERF_OUTPUT(oob_dm_requests);
+
+struct timestamp_ieee1588_v2 {
+	uint32_t tv_sec;
+	uint32_t tv_nsec;
+};
+
+struct sr6_tlv_dm_t {
 	unsigned char type; // value TBA by IANA, use NSH+1
 	unsigned char len;
 	unsigned short reserved;
@@ -20,7 +28,7 @@ struct sr6_tlv_t_dm {
 	unsigned int reserved3:20;
 	unsigned int session_id:24; /* set by the querier */
 	unsigned char tc;
-	unsigned long long timestamps[4];
+	struct timestamp_ieee1588_v2 timestamps[4];
 	unsigned char sub_tlv[0]; // possible UDP Return Object (URO)
 } BPF_PACKET_HEADER;
 
@@ -31,10 +39,8 @@ struct uro_v6 {
 	struct ip6_addr_t daddr;
 } BPF_PACKET_HEADER;
 
-BPF_PERF_OUTPUT(oob_dm_requests);
-
 struct oob_request {
-	struct sr6_tlv_t_dm response;
+	struct sr6_tlv_dm_t response;
 	struct uro_v6 uro;
 };
 
@@ -43,12 +49,11 @@ int End_OTP(struct __sk_buff *skb) {
 	if (!srh)
 		return BPF_DROP;
 
-	int srh_offset = (char *)srh - (char *)(long)skb->data;
 
-	struct sr6_tlv_t_dm tlv;
-	int cursor = seg6_find_tlv(skb, srh, srh_offset, SR6_TLV_DM, sizeof(tlv));
+	struct sr6_tlv_dm_t tlv;
+	int cursor = seg6_find_tlv(skb, srh, SR6_TLV_DM, sizeof(tlv));
 	if (cursor < 0)
-		return BPF_OK;
+		return BPF_DROP;
 
 	if (bpf_skb_load_bytes(skb, cursor, &tlv, sizeof(tlv)) < 0)
 		return BPF_DROP;
@@ -63,15 +68,43 @@ int End_OTP(struct __sk_buff *skb) {
 	} else if (tlv.flags & 8) {
 		tlv.cc = 0x11;
 		goto send;
+	} else if (tlv.rtf != 0 && tlv.rtf != 3) { // Unsupported already set RTF type
+		tlv.cc = 0x10; // Generic error
+		goto send;
 	}
 
-	// Todo put RTF
-	// Todo find empty TLV
-	// TODO compute & put timestamp
+	tlv.flags |= 8; // DM TLV becomes a response
+	tlv.rtf = 3;
+
+	int id = 0;
+	uint32_t *clk_diff_sec = clock_diff.lookup(&id);
+	id++;
+	uint32_t *clk_diff_ns = clock_diff.lookup(&id);
+	if (!clk_diff_sec || !clk_diff_ns) {
+		tlv.cc = 0x1C; // TODO
+		goto send;
+	}
+	uint64_t timestamp = bpf_ktime_get_ns();
+	uint32_t ts_sec = (uint32_t) (bpf_ktime_get_ns() / 1000000000);
+	uint32_t ts_ns = (uint32_t) (bpf_ktime_get_ns() % 1000000000);
+	ts_ns += *clk_diff_ns;
+	if (ts_ns > 1000000000) {
+		ts_sec += 1;
+		ts_ns = ts_ns - 1000000000;
+	}
+	ts_sec += *clk_diff_sec;
+	tlv.timestamps[1].tv_sec = bpf_htonl(ts_sec);
+	tlv.timestamps[1].tv_nsec = bpf_htonl(ts_ns);
+	if (query_cc == 0x00) { // in case of a two-way delay measurement
+		tlv.timestamps[2].tv_sec = tlv.timestamps[1].tv_sec;
+		tlv.timestamps[2].tv_nsec = tlv.timestamps[1].tv_nsec;
+	} // this is a BPF limitation, we can not obtain two different HW timestamps
+
+
 
 send:
 	if (query_cc == 0x00) { // in-band
-		if (bpf_lwt_seg6_store_bytes(skb, cursor , &tlv, sizeof(tlv)) < 0)
+		if (bpf_lwt_seg6_store_bytes(skb, cursor, &tlv, sizeof(tlv)) < 0)
 			return BPF_DROP;
 
 		return BPF_OK;
@@ -79,7 +112,7 @@ send:
 		struct oob_request req;
 		memcpy(&req.response, &tlv, sizeof(tlv));
 
-		cursor = seg6_find_tlv(skb, srh, srh_offset, SR6_TLV_URO, sizeof(req.uro));
+		cursor = seg6_find_tlv(skb, srh, SR6_TLV_URO, sizeof(req.uro));
 		if (cursor < 0)
 			return BPF_DROP;
 

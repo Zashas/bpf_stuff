@@ -207,11 +207,13 @@ int seg6_delete_tlv(struct __sk_buff *skb, struct ip6_srh_t *srh,
 }
 
 __attribute__((always_inline))
-int seg6_find_tlv(struct __sk_buff *skb, struct ip6_srh_t *srh, int srh_offset,
-		  unsigned char type, unsigned char len)
+int seg6_find_tlv(struct __sk_buff *skb, struct ip6_srh_t *srh, unsigned char type,
+		  unsigned char len)
 {
+	int srh_offset = (char *)srh - (char *)(long)skb->data;
 	// initial cursor = end of segments, start of possible TLVs
-	int cursor = srh_offset + ((srh->first_segment + 1) << 4);
+	int cursor = srh_offset + sizeof(struct ip6_srh_t) +
+		((srh->first_segment + 1) << 4);
 
 	#pragma clang loop unroll(full)
 	for(int i=0; i < 10; i++) { // TODO limitation
@@ -225,6 +227,8 @@ int seg6_find_tlv(struct __sk_buff *skb, struct ip6_srh_t *srh, int srh_offset,
 	
 		if (tlv.type == type && tlv.len + sizeof(struct sr6_tlv_t) == len)
 			return cursor;
+
+		cursor += sizeof(tlv) + tlv.len;
 	}
 	return -1;
 }
