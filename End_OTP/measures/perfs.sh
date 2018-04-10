@@ -42,19 +42,31 @@ ip netns exec ns2 ip -6 route add fb00::12/16 dev veth2
 ip netns exec ns1 ip -6 addr add fb00::1 dev lo
 ip netns exec ns2 ip -6 addr add fb00::2 dev lo
 
-ip netns exec ns1 tc qdisc add dev veth1 root netem delay 1234.56ms
+ip netns exec ns1 tc qdisc add dev veth1 root netem delay 1ms
 
 ip netns exec ns2 ./end_otp.py fb00::3/128 veth2
 ip netns exec ns1 ip -6 route add fb00::3 via fb00::21 dev veth1
 ip netns exec ns1 ip -6 route add fb00::2 via fb00::21 dev veth1
 ip netns exec ns2 ip -6 route add fb00::1 via fb00::12 dev veth2
 
-ip netns exec ns1 ping -I fb00::1 fb00::2 -c 1
+# needed so fb00::1 and fb00::2 both have the other MAC address in cache
+# otherwise the first measurement is flawed
+ip netns exec ns1 ping -I fb00::1 fb00::2 -c 1 > /dev/null
 
-read -p "Press enter to continue"
+read -p "Press enter to start measuring"
 ip netns exec ns1 bash -c "measures/recv.py &"
 sleep 1
-ip netns exec ns1 ./inject_dm fb00::1 fb00::2 9000 fb00::3
-sleep 5
+for i in {0..4}
+  do
+     delay="$((10 ** $i))"
+     delay="$(($delay / 10))"
+     ip netns exec ns1 tc qdisc change dev veth1 root netem delay ${delay}ms
+     echo "delay: $delay"
+     for j in {1..5}
+     do
+        ip netns exec ns1 ./inject_dm fb00::1 fb00::2 9000 fb00::3
+        sleep 1
+     done
+ done
 
 exit 0
