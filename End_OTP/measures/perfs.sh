@@ -62,7 +62,7 @@ for i in {0..4}
      delay="$(($delay / 10))"
      ip netns exec ns1 tc qdisc change dev veth1 root netem delay ${delay}ms
      echo "delay: $delay"
-     for j in {1..5}
+     for j in {1..20}
      do
         ip netns exec ns1 ./inject_dm fb00::1 fb00::2 9000 fb00::3
         sleep 1

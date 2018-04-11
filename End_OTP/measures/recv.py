@@ -24,7 +24,7 @@ sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
 sock.bind((UDP_IP, UDP_PORT))
 
 for i in range(1,6):
-    for j in range(1,6):
+    for j in range(1,21):
         data, addr = sock.recvfrom(48)
         t1 = Timestamp(data[16:24])
         t2 = Timestamp(data[24:32])

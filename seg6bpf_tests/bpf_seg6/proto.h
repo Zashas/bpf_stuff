@@ -83,21 +83,9 @@ struct ip6_t {
   unsigned long long  dst_lo;
 } BPF_PACKET_HEADER;
 
-struct ip6_addr {
+struct ip6_addr_t {
   unsigned long long  hi;
   unsigned long long  lo;
-} BPF_PACKET_HEADER;
-
-struct ip6_srh_t {
-  unsigned char nexthdr;
-  unsigned char hdrlen;
-  unsigned char type;
-  unsigned char segments_left;
-  unsigned char first_segment;
-  unsigned char flags;
-  unsigned short tag;
-	
-  struct ip6_addr segments[0];
 } BPF_PACKET_HEADER;
 
 struct ip6_opt_t {
@@ -163,6 +151,19 @@ struct vxlan_gbp_t {
   unsigned int rsv6:8;
 } BPF_PACKET_HEADER;
 
+struct ip6_srh_t {
+  unsigned char nexthdr;
+  unsigned char hdrlen;
+  unsigned char type;
+  unsigned char segments_left;
+  unsigned char first_segment;
+  unsigned char flags;
+  unsigned short tag;
+	
+  struct ip6_addr_t segments[0];
+} BPF_PACKET_HEADER;
+
+
 struct sr6_tlv_t {
     unsigned char type;
     unsigned char len;
@@ -184,5 +185,17 @@ struct sr6_tlv_hmac {
     unsigned int keyid;
     unsigned char hmac[32];
 } BPF_PACKET_HEADER;
+
+#define SR6_FLAG_PROTECTED (1 << 6)
+#define SR6_FLAG_OAM (1 << 5)
+#define SR6_FLAG_ALERT (1 << 4)
+#define SR6_FLAG_HMAC (1 << 3)
+
+#define SR6_TLV_INGRESS 1
+#define SR6_TLV_EGRESS 2
+#define SR6_TLV_OPAQ 3
+#define SR6_TLV_PADDING 4
+#define SR6_TLV_HMAC 5
+#define SR6_TLV_NSH 6
 
 #endif

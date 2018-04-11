@@ -1,38 +1,7 @@
 #include "bpf_seg6/all.h"
+#include "libseg6.c"
 
 #define EFAULT 14
-
-inline __attribute__((always_inline)) struct ip6_srh_t *get_srh(struct __sk_buff *skb) {
-    uint8_t *ipver;
-    void *data_end = (void *)(long)skb->data_end;
-    void *cursor   = (void *)(long)skb->data;
-    ipver = (uint8_t*) cursor;
-
-    // TODO we can remove some checks for seg6local as we know we have an IPv6 packet with valid SRH 
-    if ((void *)ipver + sizeof(*ipver) > data_end) // Check needed otherwise filter not accepted by the kernel
-        return NULL;
-
-    if ((*ipver >> 4) != 6) // We only care about IPv6 packets
-        return NULL;
-
-    struct ip6_t *ip;
-    ip = cursor_advance(cursor, sizeof(*ip));
-    if ((void *)ip + sizeof(*ip) > data_end) 
-        return NULL;
-
-    if (ip->next_header != 43) // We only care about IPv6 packets with the Routing header
-        return NULL;
-
-    struct ip6_srh_t *srh;
-    srh = cursor_advance(cursor, sizeof(*srh));
-    if ((void *)srh + sizeof(*srh) > data_end)
-        return NULL;
-
-    if (srh->type != 4) // We only care about SRv6 packets
-        return NULL;
-
-    return srh;
-}
 
 __section("pass")
 int do_pass(struct __sk_buff *skb) {
@@ -46,7 +15,7 @@ int do_drop(struct __sk_buff *skb) {
 
 __section("inc_tag")
 int do_inc_tag(struct __sk_buff *skb) {
-	struct ip6_srh_t *srh = get_srh(skb);
+	struct ip6_srh_t *srh = seg6_get_srh(skb);
 	int offset = sizeof(struct ip6_t) + offsetof(struct ip6_srh_t, tag);
 	if (srh == NULL)
 		return BPF_DROP;
@@ -59,7 +28,7 @@ int do_inc_tag(struct __sk_buff *skb) {
 
 __section("alert")
 int do_alert(struct __sk_buff *skb) {
-	struct ip6_srh_t *srh = get_srh(skb);
+	struct ip6_srh_t *srh = seg6_get_srh(skb);
 	int offset = sizeof(struct ip6_t) + offsetof(struct ip6_srh_t, flags);
 	if (srh == NULL)
 		return BPF_DROP;
@@ -71,7 +40,7 @@ int do_alert(struct __sk_buff *skb) {
 
 __section("end_x")
 int do_end_x(struct __sk_buff *skb) {
-	struct ip6_addr addr;
+	struct ip6_addr_t addr;
 	unsigned long long hi = 0xfc42000000000000;
 	unsigned long long lo = 0x1;
 	addr.lo = htonll(lo);
@@ -105,8 +74,8 @@ int do_end_b6(struct __sk_buff *skb) {
 	srh->flags = 0;
 	srh->tag = 0;
 
-	struct ip6_addr *seg0 = (struct ip6_addr *)((char*) srh + sizeof(*srh));
-	struct ip6_addr *seg1 = (struct ip6_addr *)((char*) seg0 + sizeof(*seg1));
+	struct ip6_addr_t *seg0 = (struct ip6_addr_t *)((char*) srh + sizeof(*srh));
+	struct ip6_addr_t *seg1 = (struct ip6_addr_t *)((char*) seg0 + sizeof(*seg1));
 	unsigned long long hi = 0xfc00000000000000;
 	unsigned long long lo = 0x1;
 	seg0->lo = htonll(lo);
@@ -135,8 +104,8 @@ int do_b6_encap(struct __sk_buff *skb) {
 	srh->flags = 0;
 	srh->tag = 0;
 
-	struct ip6_addr *seg0 = (struct ip6_addr *)((char*) srh + sizeof(*srh));
-	struct ip6_addr *seg1 = (struct ip6_addr *)((char*) seg0 + sizeof(*seg1));
+	struct ip6_addr_t *seg0 = (struct ip6_addr_t *)((char*) srh + sizeof(*srh));
+	struct ip6_addr_t *seg1 = (struct ip6_addr_t *)((char*) seg0 + sizeof(*seg1));
 	unsigned long long hi = 0xfc00000000000000;
 	unsigned long long lo = 0x1;
 	seg0->lo = htonll(lo);
@@ -164,8 +133,8 @@ int do_b6_encap_wrong(struct __sk_buff *skb) {
 	srh->flags = 0;
 	srh->tag = 0;
 
-	struct ip6_addr *seg0 = (struct ip6_addr *)((char*) srh + sizeof(*srh));
-	struct ip6_addr *seg1 = (struct ip6_addr *)((char*) seg0 + sizeof(*seg1));
+	struct ip6_addr_t *seg0 = (struct ip6_addr_t *)((char*) srh + sizeof(*srh));
+	struct ip6_addr_t *seg1 = (struct ip6_addr_t *)((char*) seg0 + sizeof(*seg1));
 	unsigned long long hi = 0xfc00000000000000;
 	unsigned long long lo = 0x1;
 	seg0->lo = htonll(lo);
@@ -194,11 +163,11 @@ int do_long_b6_encap(struct __sk_buff *skb) {
 	srh->flags = 0;
 	srh->tag = 0;
 
-	struct ip6_addr *seg0 = (struct ip6_addr *)((char*) srh + sizeof(*srh));
-	struct ip6_addr *seg1 = (struct ip6_addr *)((char*) seg0 + sizeof(*seg0));
-	struct ip6_addr *seg2 = (struct ip6_addr *)((char*) seg1 + sizeof(*seg1));
-	struct ip6_addr *seg3 = (struct ip6_addr *)((char*) seg2 + sizeof(*seg2));
-	struct ip6_addr *seg4 = (struct ip6_addr *)((char*) seg3 + sizeof(*seg3));
+	struct ip6_addr_t *seg0 = (struct ip6_addr_t *)((char*) srh + sizeof(*srh));
+	struct ip6_addr_t *seg1 = (struct ip6_addr_t *)((char*) seg0 + sizeof(*seg0));
+	struct ip6_addr_t *seg2 = (struct ip6_addr_t *)((char*) seg1 + sizeof(*seg1));
+	struct ip6_addr_t *seg3 = (struct ip6_addr_t *)((char*) seg2 + sizeof(*seg2));
+	struct ip6_addr_t *seg4 = (struct ip6_addr_t *)((char*) seg3 + sizeof(*seg3));
 	unsigned long long hi = 0xfc00000000000000;
 	unsigned long long lo = 0x1;
 	seg0->lo = htonll(lo);
@@ -238,11 +207,11 @@ int do_long_b6(struct __sk_buff *skb) {
 	srh->flags = 0;
 	srh->tag = 0;
 
-	struct ip6_addr *seg0 = (struct ip6_addr *)((char*) srh + sizeof(*srh));
-	struct ip6_addr *seg1 = (struct ip6_addr *)((char*) seg0 + sizeof(*seg0));
-	struct ip6_addr *seg2 = (struct ip6_addr *)((char*) seg1 + sizeof(*seg1));
-	struct ip6_addr *seg3 = (struct ip6_addr *)((char*) seg2 + sizeof(*seg2));
-	struct ip6_addr *seg4 = (struct ip6_addr *)((char*) seg3 + sizeof(*seg3));
+	struct ip6_addr_t *seg0 = (struct ip6_addr_t *)((char*) srh + sizeof(*srh));
+	struct ip6_addr_t *seg1 = (struct ip6_addr_t *)((char*) seg0 + sizeof(*seg0));
+	struct ip6_addr_t *seg2 = (struct ip6_addr_t *)((char*) seg1 + sizeof(*seg1));
+	struct ip6_addr_t *seg3 = (struct ip6_addr_t *)((char*) seg2 + sizeof(*seg2));
+	struct ip6_addr_t *seg4 = (struct ip6_addr_t *)((char*) seg3 + sizeof(*seg3));
 	unsigned long long hi = 0xfc00000000000000;
 	unsigned long long lo = 0x1;
 	seg0->lo = htonll(lo);
@@ -282,8 +251,8 @@ int do_push_encap(struct __sk_buff *skb) {
 	srh->flags = 0;
 	srh->tag = 0;
 
-	struct ip6_addr *seg0 = (struct ip6_addr *)((char*) srh + sizeof(*srh));
-	struct ip6_addr *seg1 = (struct ip6_addr *)((char*) seg0 + sizeof(*seg1));
+	struct ip6_addr_t *seg0 = (struct ip6_addr_t *)((char*) srh + sizeof(*srh));
+	struct ip6_addr_t *seg1 = (struct ip6_addr_t *)((char*) seg0 + sizeof(*seg1));
 	unsigned long long hi = 0xfc00000000000000;
 	unsigned long long lo = 0x1;
 	seg0->lo = htonll(lo);
@@ -311,8 +280,8 @@ int do_push_encap_wrong(struct __sk_buff *skb) {
 	srh->flags = 0;
 	srh->tag = 0;
 
-	struct ip6_addr *seg0 = (struct ip6_addr *)((char*) srh + sizeof(*srh));
-	struct ip6_addr *seg1 = (struct ip6_addr *)((char*) seg0 + sizeof(*seg1));
+	struct ip6_addr_t *seg0 = (struct ip6_addr_t *)((char*) srh + sizeof(*srh));
+	struct ip6_addr_t *seg1 = (struct ip6_addr_t *)((char*) seg0 + sizeof(*seg1));
 	unsigned long long hi = 0xfc00000000000000;
 	unsigned long long lo = 0x1;
 	seg0->lo = htonll(lo);
@@ -341,11 +310,11 @@ int do_long_encap_push(struct __sk_buff *skb) {
 	srh->flags = 0;
 	srh->tag = 0;
 
-	struct ip6_addr *seg0 = (struct ip6_addr *)((char*) srh + sizeof(*srh));
-	struct ip6_addr *seg1 = (struct ip6_addr *)((char*) seg0 + sizeof(*seg0));
-	struct ip6_addr *seg2 = (struct ip6_addr *)((char*) seg1 + sizeof(*seg1));
-	struct ip6_addr *seg3 = (struct ip6_addr *)((char*) seg2 + sizeof(*seg2));
-	struct ip6_addr *seg4 = (struct ip6_addr *)((char*) seg3 + sizeof(*seg3));
+	struct ip6_addr_t *seg0 = (struct ip6_addr_t *)((char*) srh + sizeof(*srh));
+	struct ip6_addr_t *seg1 = (struct ip6_addr_t *)((char*) seg0 + sizeof(*seg0));
+	struct ip6_addr_t *seg2 = (struct ip6_addr_t *)((char*) seg1 + sizeof(*seg1));
+	struct ip6_addr_t *seg3 = (struct ip6_addr_t *)((char*) seg2 + sizeof(*seg2));
+	struct ip6_addr_t *seg4 = (struct ip6_addr_t *)((char*) seg3 + sizeof(*seg3));
 	unsigned long long hi = 0xfc00000000000000;
 	unsigned long long lo = 0x1;
 	seg0->lo = htonll(lo);
@@ -385,11 +354,11 @@ int do_long_encap_inline(struct __sk_buff *skb) {
 	srh->flags = 0;
 	srh->tag = 0;
 
-	struct ip6_addr *seg0 = (struct ip6_addr *)((char*) srh + sizeof(*srh));
-	struct ip6_addr *seg1 = (struct ip6_addr *)((char*) seg0 + sizeof(*seg0));
-	struct ip6_addr *seg2 = (struct ip6_addr *)((char*) seg1 + sizeof(*seg1));
-	struct ip6_addr *seg3 = (struct ip6_addr *)((char*) seg2 + sizeof(*seg2));
-	struct ip6_addr *seg4 = (struct ip6_addr *)((char*) seg3 + sizeof(*seg3));
+	struct ip6_addr_t *seg0 = (struct ip6_addr_t *)((char*) srh + sizeof(*srh));
+	struct ip6_addr_t *seg1 = (struct ip6_addr_t *)((char*) seg0 + sizeof(*seg0));
+	struct ip6_addr_t *seg2 = (struct ip6_addr_t *)((char*) seg1 + sizeof(*seg1));
+	struct ip6_addr_t *seg3 = (struct ip6_addr_t *)((char*) seg2 + sizeof(*seg2));
+	struct ip6_addr_t *seg4 = (struct ip6_addr_t *)((char*) seg3 + sizeof(*seg3));
 	unsigned long long hi = 0xfc00000000000000;
 	unsigned long long lo = 0x1;
 	seg0->lo = htonll(lo);
@@ -429,9 +398,9 @@ int do_encap_inline_3seg(struct __sk_buff *skb) {
 	srh->flags = 0;
 	srh->tag = 0;
 
-	struct ip6_addr *seg0 = (struct ip6_addr *)((char*) srh + sizeof(*srh));
-	struct ip6_addr *seg1 = (struct ip6_addr *)((char*) seg0 + sizeof(*seg0));
-	struct ip6_addr *seg2 = (struct ip6_addr *)((char*) seg1 + sizeof(*seg1));
+	struct ip6_addr_t *seg0 = (struct ip6_addr_t *)((char*) srh + sizeof(*srh));
+	struct ip6_addr_t *seg1 = (struct ip6_addr_t *)((char*) seg0 + sizeof(*seg0));
+	struct ip6_addr_t *seg2 = (struct ip6_addr_t *)((char*) seg1 + sizeof(*seg1));
 	unsigned long long hi = 0xfc00000000000000;
 	unsigned long long lo = 0x1;
 	seg0->lo = htonll(lo);
@@ -453,7 +422,7 @@ int do_encap_inline_3seg(struct __sk_buff *skb) {
 
 __section("wrong_stores")
 int do_wrong_stores(struct __sk_buff *skb) {
-	struct ip6_srh_t *srh = get_srh(skb);
+	struct ip6_srh_t *srh = seg6_get_srh(skb);
 	if (srh == NULL)
 		return BPF_DROP;
 
@@ -487,7 +456,7 @@ int do_wrong_stores(struct __sk_buff *skb) {
 
 __section("wrong_adjusts")
 int do_wrong_adjusts(struct __sk_buff *skb) {
-	struct ip6_srh_t *srh = get_srh(skb);
+	struct ip6_srh_t *srh = seg6_get_srh(skb);
 	if (srh == NULL)
 		return BPF_DROP;
 

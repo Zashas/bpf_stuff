@@ -3,7 +3,7 @@
 #include <linux/seg6_local.h>
 
 #include "bpf_api.h"
-#include "proto.h"
+//#include "proto.h"
 
 /* Packet parsing state machine helpers. */
 #define cursor_advance(_cursor, _len) \
