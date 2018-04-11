@@ -7,11 +7,11 @@ from daemonize import Daemonize
 import ctypes as ct
 from time import sleep
 
-PID = "/tmp/oam_ecmp_{}.pid"
+PID = "/tmp/seg6_oam_{}.pid"
 PERF_EVENT_FREQ = 0
 sid, iface = None, None
 
-REQ_DUMP_ROUTES = 0
+REQ_DUMP_ROUTES = 1
 
 def find_value(l, name):
     for i in l:
@@ -20,43 +20,65 @@ def find_value(l, name):
 
     return None
 
-def print_oam_request(cpu, data, size):
+def oam_dump_rt(target, uro_ip, uro_port):
+    ip = IPRoute()
+
+    target_addr = socket.inet_ntop(socket.AF_INET6, target)
+
+    for r in ip.get_routes(family=socket.AF_INET6):
+        if find_value(r['attrs'], 'RTA_DST') == target_addr:
+            gws = []
+            paths = find_value(r['attrs'], 'RTA_MULTIPATH')
+            if isinstance(paths, list):
+                for p in paths:
+                    gws.append(find_value(p['attrs'], 'RTA_GATEWAY'))
+            else:
+                gws = [find_value(r['attrs'], 'RTA_GATEWAY')]
+
+            gws = [x for x in gws if x != None]
+            logger.info("RTDUMP: routes to {} asked: {}".format(target_addr, ", ".join(gws)))
+
+            sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+            try:
+                payload = bytes(target)
+                payload += bytes(ct.c_uint8(len(gws)))
+                payload += b"".join(map(lambda x: socket.inet_pton(socket.AF_INET6, x), gws))
+                sock.connect((uro_ip, uro_port))
+                sock.send(payload)
+                sock.close()
+            except Exception as e:
+                logger.error("Could not sent out-of-band DM reply to ({}, {}): {}".format(uro_ip, uro_port, e))
+
+            return
+
+    logger.warn("RTDUMP: routes to {} asked, but none found.".format(target_addr))
+
+
+def handle_oam_request(cpu, data, size):
     class OAMRequest(ct.Structure):
-        _fields_ =  [ ("req_type", ct.c_uint8),
+        _fields_ =  [ ("req_tlv_type", ct.c_uint8),
+                      ("req_tlv_len", ct.c_uint8),
+                      ("req_type", ct.c_uint8),
+                      ("req_params", ct.c_uint8),
                       ("req_args", ct.c_ubyte * 16),
-                      ("raw", ct.c_ubyte * (size - ct.sizeof(ct.c_ubyte * 16) - ct.sizeof(ct.c_uint8))) ]
+                      ("uro_type", ct.c_ubyte),
+                      ("uro_len", ct.c_ubyte),
+                      ("uro_dport", ct.c_ushort),
+                      ("uro_daddr", ct.c_ubyte * 16),
+                      ("skb", ct.c_ubyte * (size - ct.sizeof(ct.c_ubyte * 40))) ]
 
-    oam_request = ct.cast(data, ct.POINTER(OAMRequest)).contents
-    if oam_request.req_type == REQ_DUMP_ROUTES:
-        ip = IPRoute()
+    req = ct.cast(data, ct.POINTER(OAMRequest)).contents
+    uro_port = socket.ntohs(req.uro_dport)
+    uro_ip = socket.inet_ntop(socket.AF_INET6, bytes(req.uro_daddr))
 
-        server_addr = socket.inet_ntop(socket.AF_INET6, oam_request.req_args)
-
-        for r in ip.get_routes(family=socket.AF_INET6):
-            if find_value(r['attrs'], 'RTA_DST') == server_addr:
-                logger.info("route found to "+server_addr)
-
-                gws = []
-                paths = find_value(r['attrs'], 'RTA_MULTIPATH')
-                if isinstance(paths, list):
-                    for p in paths:
-                        gws.append(find_value(p['attrs'], 'RTA_GATEWAY'))
-                else:
-                    gws = [find_value(r['attrs'], 'RTA_GATEWAY')]
-
-                gws = [x for x in gws if x != None]
-                logger.info("routes to {}: {}".format(server_addr, ", ".join(gws)))
-
-                return
-
-        logger.warn("No route found to {}".format(server_addr))
-
+    if req.req_type == REQ_DUMP_ROUTES:
+        oam_dump_rt(req.req_args, uro_ip, uro_port)
     else:
-        logger.error("Received unknown OAM request type "+oam_request.req_type)
+        logger.error("Received unknown OAM request type {}".format(req.req_type))
     
 def install_rt(bpf_file):
     b = BPF(src_file=bpf_file)
-    fn = b.load_func("OAM_ECMP", 17) # TODO
+    fn = b.load_func("SEG6_OAM", 17) # TODO
 
     fds = []
     fds.append(b["oam_requests"].map_fd)
@@ -78,7 +100,7 @@ def remove_rt(sig, fr):
 def run_daemon(bpf):
     signal.signal(signal.SIGTERM, remove_rt)
     signal.signal(signal.SIGINT, remove_rt)
-    bpf["oam_requests"].open_perf_buffer(print_oam_request, page_cnt=1024)
+    bpf["oam_requests"].open_perf_buffer(handle_oam_request)
     while 1:
         bpf.kprobe_poll()
         sleep(0.01) # tune polling frequency here
@@ -94,16 +116,15 @@ rt_name = sid.replace('/','-')
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 logger.propagate = False
-fh = logging.FileHandler("/tmp/oam_ecmp_{}.log".format(rt_name), "a")
+fh = logging.FileHandler("/tmp/seg6_oam_{}.log".format(rt_name), "a")
 fh.setLevel(logging.DEBUG)
 logger.addHandler(fh)
 fds.append(fh.stream.fileno())
-formatter = logging.Formatter("%(asctime)s: %(message)s",
-                                              "%b %e %H:%M:%S")
+formatter = logging.Formatter("%(asctime)s: [%(levelname)s] %(message)s", "%b %e %H:%M:%S")
 fh.setFormatter(formatter)
 
-daemon = Daemonize(app="oam_ecmp", pid=PID.format(rt_name), action=lambda: run_daemon(bpf),
+daemon = Daemonize(app="seg6-oam", pid=PID.format(rt_name), action=lambda: run_daemon(bpf),
         keep_fds=fds, logger=logger)
-print("OAM ECMP daemon forked to background.")
+print("SRv6 OAM daemon forked to background.")
 
 daemon.start()
