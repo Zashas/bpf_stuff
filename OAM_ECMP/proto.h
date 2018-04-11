@@ -83,7 +83,7 @@ struct ip6_t {
   unsigned long long  dst_lo;
 } BPF_PACKET_HEADER;
 
-struct ip6_addr {
+struct ip6_addr_t {
   unsigned long long  hi;
   unsigned long long  lo;
 } BPF_PACKET_HEADER;
@@ -160,11 +160,11 @@ struct ip6_srh_t {
   unsigned char flags;
   unsigned short tag;
 	
-  struct ip6_addr segments[0];
+  struct ip6_addr_t segments[0];
 } BPF_PACKET_HEADER;
 
 
-struct sr6_tlv {
+struct sr6_tlv_t {
     unsigned char type;
     unsigned char len;
     unsigned char value[0];
@@ -198,4 +198,6 @@ struct sr6_tlv_hmac {
 #define SR6_TLV_HMAC 5
 #define SR6_TLV_NSH 6
 
+
+static __attribute__((always_inline)) struct ip6_srh_t *get_srh(struct __sk_buff *skb);
 #endif

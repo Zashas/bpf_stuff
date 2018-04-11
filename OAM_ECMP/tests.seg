@@ -1,21 +1,23 @@
 `./oam_ecmp.py fd00::beef/128 dum0`
 
-if add dum1
-if add dum2
 `ip -6 route add dead:beef::8 nexthop via fc00::7 dev dum0`
 `ip -6 route add dead:beef::42 nexthop via fc00::0 dev dum0 nexthop via fc00::1 dev dum0 nexthop via fc00::2 dev dum0`
-
+`ip -6 route`
 `sleep 1`
 
-> dead::42 -> fd00::beef / [baba::1, fc00::1337, +fd00::beef, fab1::49] <fl O> {Opaq: 02010000000000000000000000000000} {Opaq: deadbeef000000000000000000000008} / UDP(18572, 142) / "A payload"
-< dead::42 -> fc00::1337 / [baba::1, +fc00::1337, fd00::beef, fab1::49] <fl O> {Opaq: 02010000000000000000000000000000} {Opaq: deadbeef000000000000000000000008} / UDP(18572, 142) / "A payload"
+# TLV (2 bytes) | OAM req type (1 byte) | OAM special parameters (1 byte) | IPv6 addr (16 bytes)
+# URO 20 bytes
 
-> dead::42 -> fd00::beef / [baba::1, fc00::1337, +fd00::beef, fab1::49] <fl O> {Opaq: 02010000000000000000000000000000} {Opaq: deadbeef000000000000000000000042} / UDP(18572, 142) / "A payload"
-< dead::42 -> fc00::1337 / [baba::1, +fc00::1337, fd00::beef, fab1::49] <fl O> {Opaq: 02010000000000000000000000000000} {Opaq: deadbeef000000000000000000000042} / UDP(18572, 142) / "A payload"
+> fab1::49 -> fd00::beef / [baba::1, fc00::1337, +fd00::beef, fab1::49] <fl O> {Type:8 Value: 0100deadbeef000000000000000000000008} {Type:131 Value:2a2afab10000000000000000000000000049}
+< fab1::49 -> fc00::1337 / [baba::1, +fc00::1337, fd00::beef, fab1::49] <fl O> {Type:8 Value: 0100deadbeef000000000000000000000008} {Type:131 Value:2a2afab10000000000000000000000000049}
 
-> dead::42 -> fd00::beef / [baba::1, fc00::1337, +fd00::beef, fab1::49] <fl O> {Opaq: 02010000000000000000000000000000} {Opaq: deadbeef000000000000000000000010} / UDP(18572, 142) / "A payload"
-< dead::42 -> fc00::1337 / [baba::1, +fc00::1337, fd00::beef, fab1::49] <fl O> {Opaq: 02010000000000000000000000000000} {Opaq: deadbeef000000000000000000000010} / UDP(18572, 142) / "A payload"
+> fab1::49 -> fd00::beef / [baba::1, fc00::1337, +fd00::beef, fab1::49] <fl O> {Type:8 Value: 0100deadbeef000000000000000000000042} {Type:131 Value:2a2afab10000000000000000000000000049}
+< fab1::49 -> fc00::1337 / [baba::1, +fc00::1337, fd00::beef, fab1::49] <fl O> {Type:8 Value: 0100deadbeef000000000000000000000042} {Type:131 Value:2a2afab10000000000000000000000000049}
+
+# not in routing table
+> fab1::49 -> fd00::beef / [baba::1, fc00::1337, +fd00::beef, fab1::49] <fl O> {Type:8 Value: 0100deadbeef000000000000000000000004} {Type:131 Value:2a2afab10000000000000000000000000049}
+< fab1::49 -> fc00::1337 / [baba::1, +fc00::1337, fd00::beef, fab1::49] <fl O> {Type:8 Value: 0100deadbeef000000000000000000000004} {Type:131 Value:2a2afab10000000000000000000000000049}
 
 
 `sleep 1`
-`pkill -F /tmp/oam_ecmp_fd00::beef-128.pid`
+`pkill -F /tmp/seg6_oam_fd00::beef-128.pid`
