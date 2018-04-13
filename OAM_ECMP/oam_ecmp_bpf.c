@@ -11,20 +11,15 @@ struct tlv_oam_t {
 	uint8_t tlv_type;
 	uint8_t len;
 	uint8_t type;
-	uint8_t param;
+	uint8_t reserved;
+	uint16_t session_id;
+	uint16_t reserved2;
 	uint8_t args[16];
-} BPF_PACKET_HEADER;
-
-struct uro_v6_t {
-	unsigned char type; // URO = 131
-	unsigned char len; // = 18
-	unsigned short dport;
-	struct ip6_addr_t daddr;
 } BPF_PACKET_HEADER;
 
 struct oam_request {
 	struct tlv_oam_t oam_tlv;
-	struct uro_v6_t uro_tlv;
+	struct ip6_addr_t sender;
 };
 
 int SEG6_OAM(struct __sk_buff *skb) {
@@ -34,27 +29,19 @@ int SEG6_OAM(struct __sk_buff *skb) {
 	if (!(srh->flags & SR6_FLAG_OAM)) // if no OAM flag, let the packet simply go on
 		return BPF_OK;
 
+	struct ip6_t *ip = (void *)(long)skb->data;
+	if ((void *)ip + sizeof(*ip) > (void *)(long)skb->data_end)
+		return BPF_DROP;
+
 	struct oam_request req;
+	req.sender.hi = ip->src_hi;
+	req.sender.lo = ip->src_lo;
+
 	int cursor = seg6_find_tlv(skb, srh, SR6_TLV_OAM, sizeof(req.oam_tlv));
 	if (cursor < 0) // no OAM TLV found, nevermind
 		return BPF_OK;
 	if (bpf_skb_load_bytes(skb, cursor, &req.oam_tlv, sizeof(req.oam_tlv)) < 0)
 		return BPF_OK;
-
-	if (req.oam_tlv.type == OAM_DUMP_RT) { // URO should be included inside SRH
-		cursor = seg6_find_tlv(skb, srh, SR6_TLV_URO, sizeof(req.uro_tlv));
-		if (cursor < 0)
-			return BPF_DROP;
-
-		if (bpf_skb_load_bytes(skb, cursor, &req.uro_tlv, sizeof(req.uro_tlv)) < 0)
-			return BPF_DROP;
-	} else {
-		req.uro_tlv.type = 0;
-		req.uro_tlv.len = 0;
-		req.uro_tlv.dport = 0;
-		req.uro_tlv.daddr.hi = 0;
-		req.uro_tlv.daddr.lo = 0;
-	}
 
 	oam_requests.perf_submit_skb(skb, skb->len, &req, sizeof(req));
 	return BPF_OK;

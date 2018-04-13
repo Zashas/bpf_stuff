@@ -2,7 +2,7 @@
 
 from bcc import BPF
 from pyroute2 import IPRoute
-import sys, logging, signal, socket
+import sys, logging, signal, socket, icmp
 from daemonize import Daemonize
 import ctypes as ct
 from time import sleep
@@ -20,11 +20,12 @@ def find_value(l, name):
 
     return None
 
-def oam_dump_rt(target, uro_ip, uro_port):
+def oam_dump_rt(target, skb):
     ip = IPRoute()
 
     target_addr = socket.inet_ntop(socket.AF_INET6, target)
-
+    gws = []
+    #TODO METRIC + LPM
     for r in ip.get_routes(family=socket.AF_INET6):
         if find_value(r['attrs'], 'RTA_DST') == target_addr:
             gws = []
@@ -36,45 +37,46 @@ def oam_dump_rt(target, uro_ip, uro_port):
                 gws = [find_value(r['attrs'], 'RTA_GATEWAY')]
 
             gws = [x for x in gws if x != None]
-            logger.info("RTDUMP: routes to {} asked: {}".format(target_addr, ", ".join(gws)))
+            break
 
-            sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-            try:
-                payload = bytes(target)
-                payload += bytes(ct.c_uint8(len(gws)))
-                payload += b"".join(map(lambda x: socket.inet_pton(socket.AF_INET6, x), gws))
-                sock.connect((uro_ip, uro_port))
-                sock.send(payload)
-                sock.close()
-            except Exception as e:
-                logger.error("Could not sent out-of-band DM reply to ({}, {}): {}".format(uro_ip, uro_port, e))
+    if gws:
+        logger.info("RTDUMP: routes to {} asked: {}".format(target_addr, ", ".join(gws)))
+    else:
+        logger.warn("RTDUMP: routes to {} asked, but none found.".format(target_addr))
 
-            return
+    srh_hdrlen = (skb[41] + 1) << 3
+    srh = skb[40:40+srh_hdrlen]
+    icmp = skb[40+srh_hdrlen:]
 
-    logger.warn("RTDUMP: routes to {} asked, but none found.".format(target_addr))
+    #srh[3]+1: SRH Last Entry, corresponding to the SID of this action, since End.BPF already advanced to the next segment
+    sub_reply = struct.pack('!BBBB', srh[3] + 1, 0, len(gws), 0)
+    sub_reply += b"".join(map(lambda x: socket.inet_pton(socket.AF_INET6, x), gws))
+    icmp[6] += 1 # incrementing the number of sub-replies
+    icmp += sub_reply
 
+    try:
+        icmp.send("fd00::42", src, 100, 0, icmp, srh=srh)
+        logger.info("ICMP pkt sent")
+    except Exception as e:
+        logger.error("Could not sent out-of-band ICMP reply to {}: {}".format(src, e))
 
 def handle_oam_request(cpu, data, size):
     class OAMRequest(ct.Structure):
         _fields_ =  [ ("req_tlv_type", ct.c_uint8),
                       ("req_tlv_len", ct.c_uint8),
                       ("req_type", ct.c_uint8),
-                      ("req_params", ct.c_uint8),
-                      ("req_args", ct.c_ubyte * 16),
-                      ("uro_type", ct.c_ubyte),
-                      ("uro_len", ct.c_ubyte),
-                      ("uro_dport", ct.c_ushort),
-                      ("uro_daddr", ct.c_ubyte * 16),
-                      ("skb", ct.c_ubyte * (size - ct.sizeof(ct.c_ubyte * 40))) ]
+                      ("reserved", ct.c_uint8),
+                      ("session_id", ct.c_ushort),
+                      ("reserved", ct.c_ushort),
+                      ("req_params", ct.c_ubyte * 16),
+                      ("skb", ct.c_ubyte * (size - ct.sizeof(ct.c_ubyte * 24))) ]
 
     req = ct.cast(data, ct.POINTER(OAMRequest)).contents
-    uro_port = socket.ntohs(req.uro_dport)
-    uro_ip = socket.inet_ntop(socket.AF_INET6, bytes(req.uro_daddr))
-
+    sender = socket.inet_ntop(socket.AF_INET6, req.ipv6_src)
     if req.req_type == REQ_DUMP_ROUTES:
-        oam_dump_rt(req.req_args, uro_ip, uro_port)
+        oam_dump_rt(req.req_params, req.skb)
     else:
-        logger.error("Received unknown OAM request type {}".format(req.req_type))
+        logger.error("Received unknown OAM request type {} from {}".format(req.req_type, sender))
     
 def install_rt(bpf_file):
     b = BPF(src_file=bpf_file)

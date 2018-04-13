@@ -8,15 +8,15 @@
 # TLV (2 bytes) | OAM req type (1 byte) | OAM special parameters (1 byte) | IPv6 addr (16 bytes)
 # URO 20 bytes
 
-> fab1::49 -> fd00::beef / [baba::1, fc00::1337, +fd00::beef, fab1::49] <fl O> {Type:8 Value: 0100deadbeef000000000000000000000008} {Type:131 Value:2a2afab10000000000000000000000000049}
-< fab1::49 -> fc00::1337 / [baba::1, +fc00::1337, fd00::beef, fab1::49] <fl O> {Type:8 Value: 0100deadbeef000000000000000000000008} {Type:131 Value:2a2afab10000000000000000000000000049}
+> fc00::49 -> fd00::beef / [baba::1, fc00::1337, +fd00::beef, fc00::49] <fl O> {Type:8 Value: 01002a2a0000deadbeef000000000000000000000008}
+< fc00::49 -> fc00::1337 / [baba::1, +fc00::1337, fd00::beef, fc00::49] <fl O> {Type:8 Value: 01002a2a0000deadbeef000000000000000000000008}
 
-> fab1::49 -> fd00::beef / [baba::1, fc00::1337, +fd00::beef, fab1::49] <fl O> {Type:8 Value: 0100deadbeef000000000000000000000042} {Type:131 Value:2a2afab10000000000000000000000000049}
-< fab1::49 -> fc00::1337 / [baba::1, +fc00::1337, fd00::beef, fab1::49] <fl O> {Type:8 Value: 0100deadbeef000000000000000000000042} {Type:131 Value:2a2afab10000000000000000000000000049}
+> fc00::49 -> fd00::beef / [baba::1, fc00::1337, +fd00::beef, fc00::49] <fl O> {Type:8 Value: 01002a2a0000deadbeef000000000000000000000042}
+< fc00::49 -> fc00::1337 / [baba::1, +fc00::1337, fd00::beef, fc00::49] <fl O> {Type:8 Value: 01002a2a0000deadbeef000000000000000000000042}
 
 # not in routing table
-> fab1::49 -> fd00::beef / [baba::1, fc00::1337, +fd00::beef, fab1::49] <fl O> {Type:8 Value: 0100deadbeef000000000000000000000004} {Type:131 Value:2a2afab10000000000000000000000000049}
-< fab1::49 -> fc00::1337 / [baba::1, +fc00::1337, fd00::beef, fab1::49] <fl O> {Type:8 Value: 0100deadbeef000000000000000000000004} {Type:131 Value:2a2afab10000000000000000000000000049}
+> fc00::49 -> fd00::beef / [baba::1, fc00::1337, +fd00::beef, fc00::49] <fl O> {Type:8 Value: 01002a2a0000deadbeef000000000000000000000004}
+< fc00::49 -> fc00::1337 / [baba::1, +fc00::1337, fd00::beef, fc00::49] <fl O> {Type:8 Value: 01002a2a0000deadbeef000000000000000000000004}
 
 
 `sleep 1`
