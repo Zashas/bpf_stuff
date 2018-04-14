@@ -2,10 +2,21 @@
 
 from bcc import BPF
 from pyroute2 import IPRoute
-import sys, logging, signal, socket, icmp
+import sys, logging, signal, socket, icmp, struct
 from daemonize import Daemonize
 import ctypes as ct
 from time import sleep
+
+import traceback
+
+# Needed for the simulation in our virtualized network (validation.sh).
+# A real use-case would ask the routing daemon for the neighbors' global addresses
+LOCAL_GLOBAL_MAP = {
+    'fe80::23b':'fc00::3:0',
+    'fe80::24b':'fc00::4:0',
+    'fe80::35b':'fc00::5:0',
+    'fe80::36b':'fc00::6:0',
+}
 
 PID = "/tmp/seg6_oam_{}.pid"
 PERF_EVENT_FREQ = 0
@@ -25,7 +36,9 @@ def oam_dump_rt(target, skb):
 
     target_addr = socket.inet_ntop(socket.AF_INET6, target)
     gws = []
-    #TODO METRIC + LPM
+    #TODO: the following approach to fetch the routes is too simple, it should :
+    # - Do a longest prefix match instead of an exact match
+    # - Take into account the weights of the ECMP routes, and the metrics
     for r in ip.get_routes(family=socket.AF_INET6):
         if find_value(r['attrs'], 'RTA_DST') == target_addr:
             gws = []
@@ -36,7 +49,10 @@ def oam_dump_rt(target, skb):
             else:
                 gws = [find_value(r['attrs'], 'RTA_GATEWAY')]
 
-            gws = [x for x in gws if x != None]
+            try:
+                gws = [LOCAL_GLOBAL_MAP[x] for x in gws if x != None]
+            except KeyError:
+                logger.error("RTDUMP: do not have a global address for each of the following links".format(" ,".join(gws)))
             break
 
     if gws:
@@ -44,21 +60,29 @@ def oam_dump_rt(target, skb):
     else:
         logger.warn("RTDUMP: routes to {} asked, but none found.".format(target_addr))
 
-    srh_hdrlen = (skb[41] + 1) << 3
-    srh = skb[40:40+srh_hdrlen]
-    icmp = skb[40+srh_hdrlen:]
-
-    #srh[3]+1: SRH Last Entry, corresponding to the SID of this action, since End.BPF already advanced to the next segment
-    sub_reply = struct.pack('!BBBB', srh[3] + 1, 0, len(gws), 0)
-    sub_reply += b"".join(map(lambda x: socket.inet_pton(socket.AF_INET6, x), gws))
-    icmp[6] += 1 # incrementing the number of sub-replies
-    icmp += sub_reply
-
     try:
-        icmp.send("fd00::42", src, 100, 0, icmp, srh=srh)
-        logger.info("ICMP pkt sent")
+        srh_hdrlen = (skb[41] + 1) << 3
+        srh = skb[40:40+srh_hdrlen]
+        last_seg = socket.inet_ntop(socket.AF_INET6, bytes(srh[8:24]))
+        icmp_payload_len = int.from_bytes(skb[4:6], byteorder='big') - srh_hdrlen - 4 #assuming there are no other ext. headers than the SRH
+        icmp_data = skb[40+srh_hdrlen+4:40+srh_hdrlen+4+icmp_payload_len]
+        logger.info(' '.join('{:02x}'.format(x) for x in bytes(icmp_data)))
+        icmp_data[2] += 1 # incrementing the number of sub-replies
+
+        #srh[3]+1: SRH Last Entry, corresponding to the SID of this action, since End.BPF already advanced to the next segment
+        sub_reply = struct.pack('!BBBB', srh[3] + 1, 0, len(gws), 0)
+        sub_reply += b"".join(map(lambda x: socket.inet_pton(socket.AF_INET6, x), gws))
+        icmp_data = bytes(icmp_data)
+        icmp_data += sub_reply
+
+        src = socket.inet_pton(socket.AF_INET6, sid.split('/')[0])
+        src = src[:-2] + b'\x00\x00'
+        src = socket.inet_ntop(socket.AF_INET6, src)
+
+        icmp.send(src, last_seg, 100, 0, icmp_data, srh=bytes(srh))
     except Exception as e:
-        logger.error("Could not sent out-of-band ICMP reply to {}: {}".format(src, e))
+        logger.error("RTDUMP: could not add ICMP sub-reply and send back: {}".format(e))
+        logger.error(traceback.format_exc())
 
 def handle_oam_request(cpu, data, size):
     class OAMRequest(ct.Structure):
@@ -72,7 +96,6 @@ def handle_oam_request(cpu, data, size):
                       ("skb", ct.c_ubyte * (size - ct.sizeof(ct.c_ubyte * 24))) ]
 
     req = ct.cast(data, ct.POINTER(OAMRequest)).contents
-    sender = socket.inet_ntop(socket.AF_INET6, req.ipv6_src)
     if req.req_type == REQ_DUMP_ROUTES:
         oam_dump_rt(req.req_params, req.skb)
     else:
