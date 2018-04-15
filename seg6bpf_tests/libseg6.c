@@ -4,6 +4,7 @@
 #define bpf_lwt_seg6_store_bytes lwt_seg6_store_bytes
 
 #include "bpf_seg6/all.h"
+#define TLV_ITERATIONS 32
 
 __attribute__((always_inline))
 struct ip6_srh_t *seg6_get_srh(struct __sk_buff *skb)
@@ -11,6 +12,7 @@ struct ip6_srh_t *seg6_get_srh(struct __sk_buff *skb)
 	void *cursor, *data_end;
 	struct ip6_srh_t *srh;
 	struct ip6_t *ip;
+	uint16_t opt_len;
 	uint8_t *ipver;
 
 	data_end = (void *)(long)skb->data_end;
@@ -29,6 +31,26 @@ struct ip6_srh_t *seg6_get_srh(struct __sk_buff *skb)
 
 	if (ip->next_header != 43)
 		return NULL;
+	
+	// skipping possible destination or hop-by-hop header
+	if (ip->next_header == 0 || ip->next_header == 60) {
+		if ((void *)cursor + 2 > data_end)
+			return NULL;
+		opt_len = (1 + (uint16_t) *((uint8_t *) cursor + 1)) << 3;
+		if ((void *)cursor + opt_len > data_end)
+			return NULL;
+		cursor_advance(cursor, opt_len);
+	}
+
+	// possible destination header
+	if (ip->next_header == 60) { 
+		if ((void *)cursor + 2 > data_end)
+			return NULL;
+		opt_len = (1 + (uint16_t) *((uint8_t *) cursor + 1)) << 3;
+		if ((void *)cursor + opt_len > data_end)
+			return NULL;
+		cursor_advance(cursor, opt_len);
+	}
 
 	srh = cursor_advance(cursor, sizeof(*srh));
 	if ((void *)srh + sizeof(*srh) > data_end)
@@ -88,7 +110,7 @@ int __is_valid_tlv_boundary(struct __sk_buff *skb, struct ip6_srh_t *srh,
 
 	// we can only go as far as ~10 TLVs due to the BPF max stack size
 	#pragma clang loop unroll(full)
-	for (int i = 0; i < 10; i++) {
+	for (int i = 0; i < TLV_ITERATIONS; i++) {
 		struct sr6_tlv_t tlv;
 
 		if (cur_off == *tlv_off)
@@ -221,7 +243,7 @@ int seg6_find_tlv(struct __sk_buff *skb, struct ip6_srh_t *srh, unsigned char ty
 		((srh->first_segment + 1) << 4);
 
 	#pragma clang loop unroll(full)
-	for(int i=0; i < 10; i++) { // TODO limitation
+	for(int i=0; i < TLV_ITERATIONS; i++) {
 		if (cursor >= srh_offset + ((srh->hdrlen + 1) << 3))
 			return -1;
 
