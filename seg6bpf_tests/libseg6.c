@@ -4,7 +4,7 @@
 #define bpf_lwt_seg6_store_bytes lwt_seg6_store_bytes
 
 #include "bpf_seg6/all.h"
-#define TLV_ITERATIONS 32
+#define TLV_ITERATIONS 16
 
 __attribute__((always_inline))
 struct ip6_srh_t *seg6_get_srh(struct __sk_buff *skb)

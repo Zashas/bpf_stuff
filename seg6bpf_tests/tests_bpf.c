@@ -488,6 +488,22 @@ int do_wrong_adjusts(struct __sk_buff *skb) {
 	return BPF_OK;
 }
 
+__section("invalid_hdrlen")
+int do_invalid_hdrlen(struct __sk_buff *skb) {
+	struct ip6_srh_t *srh = seg6_get_srh(skb);
+	if (srh == NULL)
+		return BPF_DROP;
+
+	// Add a 4 bytes TLV to the end of the SRH, this will make the SRH
+	// invalid
+	int err = lwt_seg6_adjust_srh(skb, 40 + ((srh->hdrlen + 1) << 3), 4);
+	if (err)
+		printt("seg6bpf_tests/just_adjust: adjust_srh failed - error %d !\n", err);
+
+	return BPF_OK;
+}
+
+
 __section("access_cb")
 int do_access_cb(struct __sk_buff *skb) {
 	int sum = 0;

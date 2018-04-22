@@ -68,10 +68,3 @@
 
 > fc00::2 -> fd00::11 / [fc00::14,+fd00::11] {Ingr: fc00::2} {NSH: 01020304050607} {NSH: 08090A0B0C0D0E} {Opaq: 00000000000000000000000000000042} {Pad: 2} / UDP
 < fc00::2 -> fc00::14 / [+fc00::14,fd00::11] {Ingr: fc00::2} {NSH: 08090A0B0C0D0E} {Opaq: 00000000000000000000000000000042} {Pad: 4} / UDP
-
-> fc00::2 -> fd00::12 / [fc00::14,+fd00::12] <fl H> {Ingr: fc00::2} {Pad: 2} {HMAC: 1042, e6d687fa2f8b4330dc5fe3f2298136163e2ef0fb0d86fa166a8ae31ec29c7375} / UDP
-< none
-
-> fc00::2 -> fd00::12 / [fc00::14,+fd00::13] <fl H> {Ingr: fc00::2} {Pad: 2} {HMAC: 1042, e6d687fa2f8b4330dc5fe3f2298136163e2ef0fb0d86fa166a8ae31ec29c7375} / UDP
-< fc00::2 -> fc00::14 / [+fc00::14,fd00::13] {Ingr: fc00::2} {Pad: 2} / UDP
-
