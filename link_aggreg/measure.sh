@@ -1,27 +1,10 @@
 #!/bin/bash
-# Connects 6 network namespaces through veths.
-# Each NS may have different IPv6 global scope addresses :
-#   NS1 ---- NS2 ---- NS3 ---- NS4 ---- NS5 ---- NS6
-# fe80::1           fd00::1  fd00::2  fd00::3  fe80::6
-#                   fc42::1           fd00::4
-#
-# All IPv6 packets going to fe80::/16 through NS2 will be encapsulated in a
-# IPv6 header with a Segment Routing Header, with segments :
-# 	fd00::1 -> fd00::2 -> fd00::3 -> fd00::4
-#
-# 3 fd00::/16 IPv6 addresses are binded to seg6local End.BPF actions :
-# - fd00::1 : add a TLV, change the flags and apply a End.X action to fc42::1
-# - fd00::2 : remove the TLV, change the flags, add a tag
-# - fd00::3 : apply an End.T action to fd00::4, through routing table 117
-#
-# fd00::4 is a simple Segment Routing node decapsulating the inner IPv6 packet.
-# Each End.BPF action will validate the operations applied on the SRH by the
-# previous BPF program in the chain, otherwise the packet is dropped.
-#
-# An UDP datagram is sent from fe80::1 to fe80::6. The test succeeds if this
-# datagram can be read on NS6 when binding to fe80::6.
 
-TMP_FILE="/tmp/selftest_lwt_seg6local.txt"
+BW1=50
+BW2=10
+
+LATENCY1=10
+LATENCY2=10
 
 cleanup()
 {
@@ -36,7 +19,7 @@ cleanup()
 	ip netns del ns2 2> /dev/null
 	ip netns del ns3 2> /dev/null
 	ip netns del ns4 2> /dev/null
-	rm -f $TMP_FILE
+    pkill -F /tmp/link_aggreg_fc00::4-128.pid
 }
 
 set -e
@@ -103,7 +86,8 @@ ip netns exec ns4 ip -6 route add fc00::1 dev veth6 via fe80::56
 ip netns exec ns2 ip sr tunsrc set fc00::2
 ip netns exec ns2 ip -6 route add fc00::1 dev veth2 via fe80::12
 #ip netns exec ns2 ip -6 route add fc00::4 dev veth3 via fe80::43
-ip netns exec ns2 ip -6 route add fc00::4 encap seg6 mode encap segs fc00::3b dev veth3
+#ip netns exec ns2 ip -6 route add fc00::4 encap seg6 mode encap segs fc00::3b dev veth3
+ip netns exec ns2 ./link_aggreg.py fc00::4/128 veth3 fc00::3a $BW1 fc00::3b $BW2
 ip netns exec ns2 ip -6 route add fc00::3 dev veth3 via fe80::43
 ip netns exec ns2 ip -6 route add fc00::3a dev veth3 via fe80::43
 ip netns exec ns2 ip -6 route add fc00::3b dev veth7 via fe80::87
@@ -114,11 +98,14 @@ ip netns exec ns3 ip -6 route add fc00::2 dev veth4 via fe80::34
 
 ip netns exec ns2 tc qdisc add dev veth3 handle 1: root htb default 11
 ip netns exec ns2 tc class add dev veth3 parent 1: classid 1:1 htb rate 1000Mbps
-ip netns exec ns2 tc class add dev veth3 parent 1:1 classid 1:11 htb rate 10Mbit
+ip netns exec ns2 tc class add dev veth3 parent 1:1 classid 1:11 htb rate ${BW1}Mbit
+ip netns exec ns2 tc qdisc add dev veth3 parent 1:11 handle 10: netem delay ${LATENCY1}ms
+#ip netns exec ns2 tc filter add dev veth3 protocol ip6 parent 1:0 prio 1 u32 match ip dst 10.0.0.1/32 
 
-ip netns exec ns2 tc qdisc add dev veth7 handle 1: root htb default 11
-ip netns exec ns2 tc class add dev veth7 parent 1: classid 1:1 htb rate 1000Mbps
-ip netns exec ns2 tc class add dev veth7 parent 1:1 classid 1:11 htb rate 20Mbit
+ip netns exec ns2 tc qdisc add dev veth7 handle 2: root htb default 11
+ip netns exec ns2 tc class add dev veth7 parent 2: classid 2:1 htb rate 1000Mbps
+ip netns exec ns2 tc class add dev veth7 parent 2:1 classid 2:11 htb rate ${BW2}Mbit
+ip netns exec ns2 tc qdisc add dev veth7 parent 2:11 handle 10: netem delay ${LATENCY2}ms
 
 ip netns exec ns2 sysctl net.ipv6.conf.all.forwarding=1 > /dev/null
 ip netns exec ns3 sysctl net.ipv6.conf.all.forwarding=1 > /dev/null
@@ -133,12 +120,12 @@ ip netns exec ns3 sysctl net.ipv6.conf.veth4.seg6_enabled=1 > /dev/null
 ip netns exec ns3 sysctl net.ipv6.conf.veth8.seg6_enabled=1 > /dev/null
 
 sleep 5
-ip netns exec ns1 ping -c 4 -I fc00::1 fc00::4
+ip netns exec ns1 ping -c 10 -I fc00::1 fc00::4
 
 ip netns exec ns4 iperf -s -V -D
 sleep 1
 echo "Running client"
-ip netns exec ns1 iperf -V -t 5 -b 100M -M 1350 -B fc00::1 -c fc00::4 -e
+ip netns exec ns1 iperf -V -t 15 -b 100M -l 1350 -M 1350 -B fc00::1 -c fc00::4 -e
 
 killall iperf
 #ip netns exec ns6 nc -l -6 -u -d 7330 > $TMP_FILE &

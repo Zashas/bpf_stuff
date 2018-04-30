@@ -12,17 +12,17 @@ void build_SRH(char *srh_buf, struct ip6_addr_t *dst, struct ip6_addr_t *interme
 	srh->type = 4;
 	srh->flags = 0;
 	srh->tag = 0;
-	srh->hdrlen = 4;
-	srh->segments_left = 1;
-	srh->first_segment = 1;
+	srh->hdrlen = 2;
+	srh->segments_left = 0;
+	srh->first_segment = 0;
 
 	struct ip6_addr_t *seg0 = (struct ip6_addr_t *)((char*) srh + sizeof(*srh));
-	struct ip6_addr_t *seg1 = (struct ip6_addr_t *)((char*) seg0 + sizeof(*seg0));
-	seg0->hi = dst->hi;
-	seg0->lo = dst->lo;
+	//struct ip6_addr_t *seg1 = (struct ip6_addr_t *)((char*) seg0 + sizeof(*seg0));
+	//seg0->hi = dst->hi;
+	//seg0->lo = dst->lo;
 
-	seg1->hi = intermediate->hi;
-	seg1->lo = intermediate->lo;
+	seg0->hi = intermediate->hi;
+	seg0->lo = intermediate->lo;
 }
 
 static __attribute__((always_inline))
@@ -104,7 +104,7 @@ int LB(struct __sk_buff *skb)
 
 	char srh_buf[40];
 	build_SRH(srh_buf, (struct ip6_addr_t *)&ip->dst_hi, hop);
-	bpf_lwt_push_encap(skb, BPF_LWT_ENCAP_SEG6, (void *)srh_buf, 40);
+	bpf_lwt_push_encap(skb, BPF_LWT_ENCAP_SEG6, (void *)srh_buf, 24);
 	return BPF_OK;	
 }
 

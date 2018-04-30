@@ -3,34 +3,34 @@
 
 `ip sr tunsrc set fc00::21`
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [fb00::12,+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [fb00::12,+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [fb00::12,+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [fb00::12,+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [fb00::12,+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [fb00::12,+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [fb00::12,+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [fb00::12,+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [fb00::12,+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [fb00::12,+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
 
 
 `sleep 1`
