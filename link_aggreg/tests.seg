@@ -1,36 +1,36 @@
-`./link_aggreg.py fb00::/16 dum0 fc00::1 2 fc00::2 3`
+`./link_aggreg.py fb00::/16 dum0 fc00::1 fc00::a 2 fc00::2 fc00::a 3 fb00::ffff/128`
 `sleep 1`
 
 `ip sr tunsrc set fc00::21`
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [::, +fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [::, +fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [::, +fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [::, +fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [::, +fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [::, +fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [::, +fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [::, +fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [::, +fc00::1] / dead::beef -> fb00::12
 
 > dead::beef -> fb00::12
-< fc00::21 -> fc00::1 / [+fc00::1] / dead::beef -> fb00::12
+< fc00::21 -> fc00::1 / [::, +fc00::1] / dead::beef -> fb00::12
 
 
 `sleep 1`

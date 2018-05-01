@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BW1=50
+BW1=10
 BW2=10
 
 LATENCY1=10
@@ -19,7 +19,7 @@ cleanup()
 	ip netns del ns2 2> /dev/null
 	ip netns del ns3 2> /dev/null
 	ip netns del ns4 2> /dev/null
-    pkill -F /tmp/link_aggreg_fc00::4-128.pid
+	pkill -F /tmp/link_aggreg_fc00::4-128.pid
 }
 
 set -e
@@ -87,7 +87,7 @@ ip netns exec ns2 ip sr tunsrc set fc00::2
 ip netns exec ns2 ip -6 route add fc00::1 dev veth2 via fe80::12
 #ip netns exec ns2 ip -6 route add fc00::4 dev veth3 via fe80::43
 #ip netns exec ns2 ip -6 route add fc00::4 encap seg6 mode encap segs fc00::3b dev veth3
-ip netns exec ns2 ./link_aggreg.py fc00::4/128 veth3 fc00::3a $BW1 fc00::3b $BW2
+ip netns exec ns2 ./link_aggreg.py fc00::4/128 veth3 fc00::3a fc00::3c $BW1 fc00::3b fc00::3c $BW2 fc00::2a
 ip netns exec ns2 ip -6 route add fc00::3 dev veth3 via fe80::43
 ip netns exec ns2 ip -6 route add fc00::3a dev veth3 via fe80::43
 ip netns exec ns2 ip -6 route add fc00::3b dev veth7 via fe80::87
@@ -95,6 +95,9 @@ ip netns exec ns2 ip -6 route add fc00::3b dev veth7 via fe80::87
 ip netns exec ns3 ip -6 route add fc00::4 dev veth5 via fe80::65
 ip netns exec ns3 ip -6 route add fc00::1 dev veth4 via fe80::34
 ip netns exec ns3 ip -6 route add fc00::2 dev veth4 via fe80::34
+
+ip netns exec ns3 /home/math/shared/iproute2/ip/ip -6 route add fc00::3c encap seg6local action End.BPF obj tiny_end_otp/end_otp_bpf.o section end_otp dev veth4
+ip netns exec ns3 tiny_end_otp/end_otp_usr
 
 ip netns exec ns2 tc qdisc add dev veth3 handle 1: root htb default 11
 ip netns exec ns2 tc class add dev veth3 parent 1: classid 1:1 htb rate 1000Mbps
@@ -120,12 +123,13 @@ ip netns exec ns3 sysctl net.ipv6.conf.veth4.seg6_enabled=1 > /dev/null
 ip netns exec ns3 sysctl net.ipv6.conf.veth8.seg6_enabled=1 > /dev/null
 
 sleep 5
-ip netns exec ns1 ping -c 10 -I fc00::1 fc00::4
+ip netns exec ns1 ping -c 4 -I fc00::1 fc00::4
 
 ip netns exec ns4 iperf -s -V -D
 sleep 1
 echo "Running client"
-ip netns exec ns1 iperf -V -t 15 -b 100M -l 1350 -M 1350 -B fc00::1 -c fc00::4 -e
+ip netns exec ns1 iperf -V -t 3 -l 1350 -M 1350 -B fc00::1 -c fc00::4 -e
+#ip netns exec ns1 iperf -b 150M -V -t 15 -l 1350 -M 1350 -B fc00::1 -c fc00::4 -e -u
 
 killall iperf
 #ip netns exec ns6 nc -l -6 -u -d 7330 > $TMP_FILE &
