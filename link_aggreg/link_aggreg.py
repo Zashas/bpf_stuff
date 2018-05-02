@@ -1,11 +1,10 @@
 #!/usr/bin/python3
 
-import sys, logging, signal, socket, os, socket, math, struct
+import sys, logging, signal, socket, os, socket, math, struct, time
 import ctypes as ct
 from daemonize import Daemonize
 from pyroute2 import IPRoute
 from functools import reduce
-from time import sleep
 from bcc import BPF
 
 PID = "/tmp/link_aggreg_{}.pid"
@@ -30,16 +29,22 @@ class DM_TLV(ct.Structure):
                   ("session_id", ct.c_uint32, 24),
                   ("tc", ct.c_uint32, 8),
 
-                  ("timestamp1", ct.c_uint64),
-                  ("timestamp2", ct.c_uint64),
-                  ("timestamp3", ct.c_uint64),
-                  ("timestamp4", ct.c_uint64) ]
+                  ("timestamp1_sec", ct.c_uint32),
+                  ("timestamp1_nsec", ct.c_uint32),
+                  ("timestamp2_sec", ct.c_uint32),
+                  ("timestamp2_nsec", ct.c_uint32),
+                  ("timestamp3_sec", ct.c_uint32),
+                  ("timestamp3_nsec", ct.c_uint32),
+                  ("timestamp4_sec", ct.c_uint32),
+                  ("timestamp4_nsec", ct.c_uint32) ]
 
 class Node:
     sid, sid_bytes = "", b""
     otp_sid, otp_sid_bytes = "", b""
     weight = 0
     delay_down, delay_up = 0, 0
+    last_dm_sess_id_sent = 0
+    last_dm_sess_id = 0
 
     def __init__(self, sid, otp_sid, weight):
         self.sid, self.otp_sid = sid, otp_sid
@@ -47,12 +52,24 @@ class Node:
         self.sid_bytes = socket.inet_pton(socket.AF_INET6, sid)
         self.weight = int(weight)
 
-    def update_delays(self, delay_down, delay_up):
-        self.delay_down, self.delay_up = delay_down, delay_up
+    def update_delays(self, sess_id, delay_down, delay_up):
+        if sess_id > self.last_dm_sess_id:
+            self.delay_down, self.delay_up = delay_down, delay_up
+            self.last_dm_sess_id = sess_id
+
+    def get_new_dm_sess_id(self):
+        self.last_dm_sess_id_sent += 1
+        return self.last_dm_sess_id_sent
 
 def send_delay_probe(node):
+    sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+    sock.bind(('', 9999))
+
     src_rcv = dm_prefix.split('/')[0]
     segments = (bytes(16), node.otp_sid_bytes, node.sid_bytes)
+
+    hdrlen = (48 + len(segments) * 16) >> 3
+    srh_base = struct.pack("!BBBBBBH", 0, hdrlen, 4, len(segments) - 1, len(segments) - 1, 0, 0)
 
     dm = DM_TLV()
     dm.type = 7
@@ -60,32 +77,31 @@ def send_delay_probe(node):
     dm.version = 1
     dm.cc = 0
     dm.qtf = 3
-    dm.timestamp1 = 42
-    dm.session_id = 10
+    dm.session_id = node.get_new_dm_sess_id()
 
-    hdrlen = (len(bytes(dm)) + len(segments) * 16) >> 3
-    srh_base = struct.pack("!BBBBBBH", 0, hdrlen, 4, len(segments) - 1, len(segments) - 1, 0, 0)
+    ts = time.time()
+    dm.timestamp1_sec = socket.htonl(int(ts))
+    dm.timestamp1_nsec = socket.htonl(int((ts % 1) * 10**9))
+
     srh = srh_base + reduce(lambda x,y: x+y, segments) + bytes(dm)
-    
-    sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
     sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_RTHDR, srh)
-
-    sock.bind(('', 9999))
     sock.sendto(b"", (src_rcv, 9999))
+    sock.close()
 
 def handle_dm_reply(cpu, data, size):
-    class Timestamp:
-        val = 0
-
-        def __init__(self, bits):
-            self.val = float(int.from_bytes(bits[0:4], byteorder='big'))
-            self.val += float(int.from_bytes(bits[4:8], byteorder='big')) / 10**9
-
-        def __sub__(self, other):
-            return self.val - other.val
+    t4 = time.time()
+    def ieee_to_float(sec, nsec):
+        val = float(socket.ntohl(sec))
+        val += float(socket.ntohl(nsec)) / 10**9
+        return val
 
     dm = ct.cast(data, ct.POINTER(DM_TLV)).contents
-    logger.info('{} {} {} {}'.format(dm.timestamp1, dm.timestamp2, dm.timestamp3, dm.timestamp4))
+
+    t1 = ieee_to_float(dm.timestamp1_sec, dm.timestamp1_nsec)
+    t2 = ieee_to_float(dm.timestamp2_sec, dm.timestamp2_nsec)
+    t3 = ieee_to_float(dm.timestamp3_sec, dm.timestamp3_nsec)
+
+    logger.info("{} -> {}, delays: {} {}".format(t1, t2, t2-t1, t4-t3))
 
 def install_rt(prefix, bpf_file, bpf_func, maps):
     b = BPF(src_file=bpf_file)
@@ -125,10 +141,11 @@ def run_daemon(bpf_aggreg, bpf_dm):
 
     bpf_dm["dm_messages"].open_perf_buffer(handle_dm_reply)
 
+    time.sleep(5)
     send_delay_probe(N1)
     while 1:
         bpf_dm.kprobe_poll()
-        sleep(0.01) # tune polling frequency here
+        time.sleep(0.01) # tune polling frequency here
 
 def get_logger():
     logger = logging.getLogger(__name__)
@@ -155,6 +172,7 @@ if __name__ == '__main__':
     rt_name = prefix.replace('/','-')
 
     bpf_dm, fds_dm = install_rt(dm_prefix, 'dm_recv_bpf.c', 'DM_recv', ('dm_messages',))
+    print(bpf_dm, dm_prefix)
 
     logger, fd_logger = get_logger()
     keep_fds = [fd_logger] + fds_aggreg + fds_dm

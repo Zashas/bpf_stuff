@@ -90,7 +90,7 @@ int main (int argc, char *argv[])
 	uint32_t delta_s = mono_real_diff_sec();
 	bpf_update_elem(map_fd[0], &key, &delta_s, BPF_ANY);
 
-	uint32_t delta_ns = mono_real_diff_sec();
+	uint32_t delta_ns = mono_real_diff_ns();
 	key++;
 	bpf_update_elem(map_fd[0], &key, &delta_ns, BPF_ANY);
 

@@ -1,5 +1,6 @@
 `./link_aggreg.py fb00::/16 dum0 fc00::1 fc00::a 2 fc00::2 fc00::a 3 fb00::ffff/128`
 `sleep 1`
+`/home/math/shared/iproute2/ip/ip -6 route`
 
 `ip sr tunsrc set fc00::21`
 > dead::beef -> fb00::12

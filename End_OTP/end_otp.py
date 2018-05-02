@@ -38,7 +38,7 @@ def handle_oob_request(cpu, data, size):
         
 def install_rt(bpf_file):
     b = BPF(src_file=bpf_file)
-    fn = b.load_func("End_OTP", 17) # TODO
+    fn = b.load_func("End_OTP", 19) # TODO
 
     fds = []
     fds.append(b["oob_dm_requests"].map_fd)
@@ -74,7 +74,7 @@ if len(sys.argv) < 3:
     sys.exit(1)
 
 sid,iface = sys.argv[1:3]
-bpf, fds = install_rt('end_otp_bpf.c')
+bpf, fds = install_rt(os.path.join(dir_path, 'end_otp_bpf.c'))
 rt_name = sid.replace('/','-')
 
 logger = logging.getLogger(__name__)

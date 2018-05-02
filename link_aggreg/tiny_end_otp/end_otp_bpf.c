@@ -81,11 +81,10 @@ int End_OTP(struct __sk_buff *skb) {
 	id++;
 	uint32_t *clk_diff_ns = map_lookup_elem(&end_otp_delta, &id);
 	if (!clk_diff_sec || !clk_diff_ns) {
-		tlv.cc = 0x1C; // TODO
+		tlv.cc = 0x1C;
 		goto send;
 	}
 
-	printt("%u %u\n", *clk_diff_sec, *clk_diff_ns);
 	uint32_t ts_sec = (uint32_t) (timestamp / 1000000000);
 	uint32_t ts_ns = (uint32_t) (timestamp % 1000000000);
 	ts_ns += *clk_diff_ns;
@@ -100,8 +99,6 @@ int End_OTP(struct __sk_buff *skb) {
 	// this is a BPF limitation, we can not obtain two different HW timestamps
 	tlv.timestamps[2].tv_sec = tlv.timestamps[1].tv_sec;
 	tlv.timestamps[2].tv_nsec = tlv.timestamps[1].tv_nsec;
-
-
 
 send:
 	if (query_cc == 0x00) { // in-band
