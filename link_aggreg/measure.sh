@@ -1,10 +1,10 @@
 #!/bin/bash
 
-BW_SOUTH=10
-BW_NORTH=10
+BW_SOUTH=50
+BW_NORTH=50
 
-LATENCY_SOUTH=20
-LATENCY_NORTH=20
+LATENCY_SOUTH=40
+LATENCY_NORTH=40
 
 cleanup()
 {
@@ -134,29 +134,6 @@ ip netns exec ns2S tc class add dev veth4bis parent 1: classid 1:1 htb rate 1000
 ip netns exec ns2S tc class add dev veth4bis parent 1:1 classid 1:11 htb rate ${BW_SOUTH}Mbit
 ip netns exec ns2S tc qdisc add dev veth4bis parent 1:11 handle 10: netem delay ${LATENCY_SOUTH}ms
 
-ip netns exec ns2 tc qdisc add dev veth3 root handle 1: htb default 42 # default non-classified traffic goes to 1:12
-ip netns exec ns2 tc class add dev veth3 parent 1: classid 1:1 htb rate 1000Mbps
-ip netns exec ns2 tc class add dev veth3 parent 1: classid 1:2 htb rate 1000Mbps
-ip netns exec ns2 tc class add dev veth3 parent 1: classid 1:3 htb rate 1000Mbps
-ip netns exec ns2 tc filter add dev veth3 protocol all parent 1: prio 2 u32 match u32 0 0 flowid 1:1
-ip netns exec ns2 tc filter add dev veth3 protocol ipv6 parent 1: prio 1 u32 match ip6 dst fc00::3a flowid 1:2
-ip netns exec ns2 tc filter add dev veth3 protocol ipv6 parent 1: prio 1 u32 match ip6 dst fc00::3b flowid 1:3
-ip netns exec ns2 tc qdisc add dev veth3 parent 1:1 handle 20: sfq
-ip netns exec ns2 tc qdisc add dev veth3 parent 1:2 handle 12: netem delay 15ms
-ip netns exec ns2 tc qdisc add dev veth3 parent 1:3 handle 13: netem delay 20ms
-
-ip netns exec ns2 tc qdisc add dev veth7 root handle 1: htb default 42 # default non-classified traffic goes to 1:12
-ip netns exec ns2 tc class add dev veth7 parent 1: classid 1:1 htb rate 1000Mbps
-ip netns exec ns2 tc class add dev veth7 parent 1: classid 1:2 htb rate 1000Mbps
-ip netns exec ns2 tc class add dev veth7 parent 1: classid 1:3 htb rate 1000Mbps
-ip netns exec ns2 tc filter add dev veth7 protocol all parent 1: prio 2 u32 match u32 0 0 flowid 1:1
-ip netns exec ns2 tc filter add dev veth7 protocol ipv6 parent 1: prio 1 u32 match ip6 dst fc00::3a flowid 1:2
-ip netns exec ns2 tc filter add dev veth7 protocol ipv6 parent 1: prio 1 u32 match ip6 dst fc00::3b flowid 1:3
-ip netns exec ns2 tc qdisc add dev veth7 parent 1:1 handle 20: sfq
-ip netns exec ns2 tc qdisc add dev veth7 parent 1:2 handle 12: netem delay 15ms
-ip netns exec ns2 tc qdisc add dev veth7 parent 1:3 handle 13: netem delay 20ms
-ip netns exec ns2 tc qdisc change dev veth7 parent 1:3 handle 13: netem delay 10ms
-
 ip netns exec ns2N tc qdisc add dev veth8bis handle 2: root htb default 11
 ip netns exec ns2N tc class add dev veth8bis parent 2: classid 2:1 htb rate 1000Mbps
 ip netns exec ns2N tc class add dev veth8bis parent 2:1 classid 2:11 htb rate ${BW_NORTH}Mbit
@@ -177,9 +154,26 @@ ip netns exec ns3 sysctl net.ipv6.conf.veth4.seg6_enabled=1 > /dev/null
 ip netns exec ns3 sysctl net.ipv6.conf.veth8.seg6_enabled=1 > /dev/null
 
 sleep 3
-ip netns exec ns2 ./link_aggreg.py fc00::4/128 veth3 fc00::3a fc00::3c $BW_SOUTH fc00::3b fc00::3c $BW_NORTH fc00::2a/128
+ip netns exec ns2 tc qdisc add dev veth3 root handle 1: htb default 42 # default non-classified traffic goes to 1:12
+ip netns exec ns2 tc class add dev veth3 parent 1: classid 1:1 htb rate 1000Mbps
+ip netns exec ns2 tc filter add dev veth3 protocol all parent 1: prio 2 u32 match u32 0 0 flowid 1:1
+ip netns exec ns2 tc qdisc add dev veth3 parent 1:1 handle 20: sfq
+
+ip netns exec ns2 tc qdisc add dev veth7 root handle 1: htb default 42 # default non-classified traffic goes to 1:12
+ip netns exec ns2 tc class add dev veth7 parent 1: classid 1:1 htb rate 1000Mbps
+#ip netns exec ns2 tc class add dev veth7 parent 1: classid 1:2 htb rate 1000Mbps
+#ip netns exec ns2 tc class add dev veth7 parent 1: classid 1:3 htb rate 1000Mbps
+ip netns exec ns2 tc filter add dev veth7 protocol all parent 1: prio 2 u32 match u32 0 0 flowid 1:1
+#ip netns exec ns2 tc filter add dev veth7 protocol ipv6 parent 1: prio 1 u32 match ip6 dst fc00::3a flowid 1:2
+#ip netns exec ns2 tc filter add dev veth7 protocol ipv6 parent 1: prio 1 u32 match ip6 dst fc00::3b flowid 1:3
+ip netns exec ns2 tc qdisc add dev veth7 parent 1:1 handle 20: sfq
+#ip netns exec ns2 tc qdisc add dev veth7 parent 1:2 handle 12: netem delay 15ms
+#ip netns exec ns2 tc qdisc add dev veth7 parent 1:3 handle 13: netem delay 20ms
+#ip netns exec ns2 tc qdisc change dev veth7 parent 1:3 handle 13: netem delay 10ms
+ip netns exec ns2 ./link_aggreg.py fc00::4/128 fc00::3a fc00::3c $BW_SOUTH fc00::3b fc00::3c $BW_NORTH fc00::2a/128 veth3 veth7
+
 sleep 1
-ip netns exec ns1 ping -c 10 -I fc00::1 fc00::4
+ip netns exec ns1 ping -c 20 -I fc00::1 fc00::4
 
 #ip netns exec ns4 iperf -s -V -D
 #sleep 1
