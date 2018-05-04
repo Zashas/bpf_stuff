@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-import sys, logging, signal, socket, os, socket, math
+import sys, logging, signal, socket, os, socket, math, traceback
 import struct, time, subprocess, threading, collections
 import ctypes as ct
 from daemonize import Daemonize
@@ -14,7 +14,6 @@ PROBES_FREQ = 2 # in sec
 
 prefix, N1, N2, dm_prefix, logger = None, None, None, None, None
 daemon_running = True
-probes_thread = None
 
 class DM_TLV(ct.Structure):
     _pack_ = 1 
@@ -132,9 +131,10 @@ class Node:
 
         #ip netns exec ns2 tc class add dev veth7 parent 1: classid 1:2 htb rate 1000Mbps
         for iface in ifaces:
-            ret = subprocess.run(["tc", "class", "delete", "dev", iface, "parent", parent, "classid", self.tc_classid, "htb", "rate", "1000Mbps"])
+            ret = subprocess.run(["tc", "class", "delete", "dev", iface, "parent", parent, "classid", self.tc_classid, "htb", "rate", "1000Mbps"], stderr=subprocess.PIPE)
             if ret.returncode:
-                logger.error("Could not delete tc class for dev {}: {}".format(iface, " ".join(ret.args)))
+                stderr = ret.stderr.decode('ascii').strip()
+                logger.error("Could not delete tc class for dev {}: {} ({})".format(iface, stderr, " ".join(ret.args)))
 
             ret = subprocess.run(["tc", "filter", "delete", "dev", iface, "protocol", "ipv6", "parent", parent, "prio", "1", "u32", "match", "ip6", "dst", self.sid, "flowid", self.tc_classid])
             if ret.returncode:
@@ -143,6 +143,15 @@ class Node:
 
     class ConfigError(Exception):
         pass
+
+def log_traceback(func):
+    def f(*args, **kwargs):
+        try:
+            return func(*args, **kwargs) 
+        except Exception:
+            logger.error(traceback.format_exc()) 
+
+    return f
 
 def send_delay_probe(node):
     sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
@@ -175,6 +184,7 @@ def send_delay_probe(node):
 
     return dm.session_id
 
+@log_traceback
 def probes_sender():
     current_batch_id = 0
     while daemon_running:
@@ -184,42 +194,51 @@ def probes_sender():
             sessid = send_delay_probe(node)
             session = DM_Session(node, batch, current_batch_id, node.tc_delay_down)
             batch.append(session)
+
             Node.dm_sessions[sessid] = session
 
         current_batch_id += 1
 
         # remove unanswered probes older than 3 batches
-        for k,v in Node.dm_sessions.items():
+        for k,v in Node.dm_sessions.copy().items():
             if current_batch_id > v.batch_id + 3:
                 del Node.dm_sessions[k]
 
         time.sleep(PROBES_FREQ)
 
+@log_traceback
 def handle_dm_reply(cpu, data, size):
-    t4 = time.time()
-    def ieee_to_float(sec, nsec):
-        val = float(socket.ntohl(sec))
-        val += float(socket.ntohl(nsec)) / 10**9
-        return val
+    try:
+        t4 = time.time()
+        def ieee_to_float(sec, nsec):
+            val = float(socket.ntohl(sec))
+            val += float(socket.ntohl(nsec)) / 10**9
+            return val
 
-    dm = ct.cast(data, ct.POINTER(DM_TLV)).contents
-    if not dm.session_id in Node.dm_sessions:
-        return
-    session = Node.dm_sessions[dm.session_id]
+        dm = ct.cast(data, ct.POINTER(DM_TLV)).contents
+        if not dm.session_id in Node.dm_sessions:
+            return
+        session = Node.dm_sessions[dm.session_id]
 
-    t1 = ieee_to_float(dm.timestamp1_sec, dm.timestamp1_nsec)
-    t2 = ieee_to_float(dm.timestamp2_sec, dm.timestamp2_nsec)
-    t3 = ieee_to_float(dm.timestamp3_sec, dm.timestamp3_nsec)
-    session.store_delays(t2 - t1, t4 - t3)
+        t1 = ieee_to_float(dm.timestamp1_sec, dm.timestamp1_nsec)
+        t2 = ieee_to_float(dm.timestamp2_sec, dm.timestamp2_nsec)
+        t3 = ieee_to_float(dm.timestamp3_sec, dm.timestamp3_nsec)
+        session.store_delays(t2 - t1, t4 - t3)
 
-    if session.batch_id > Node.last_batch_completed and all(map(lambda x: x.has_reply(), session.batch)):
-        update_tc_delays(session.batch_id, session.batch)
+        if session.batch_id > Node.last_batch_completed and all(map(lambda x: x.has_reply(), session.batch)):
+            update_tc_delays(session.batch_id, session.batch)
+
+    except Exception:
+        import traceback
+        logger.error(traceback.format_exc())
 
 def update_tc_delays(batch_id, batch):
     Node.last_batch_completed = batch_id
 
     delay1 = batch[0].delay_down - batch[0].tc_delay
     delay2 = batch[1].delay_down - batch[1].tc_delay
+    logger.info("D1: {} - {}".format(batch[0].delay_down, batch[0].tc_delay))
+    logger.info("D2: {} - {}".format(batch[1].delay_down, batch[1].tc_delay))
     if delay1 < delay2:
         node_fast = batch[0].node
         node_slow = batch[1].node
@@ -228,10 +247,10 @@ def update_tc_delays(batch_id, batch):
         node_fast = batch[1].node
         node_slow = batch[0].node
         diff_delay = delay1 - delay2
+    logger.info("new delay on {}: {}".format(node_slow.sid, diff_delay))
 
     node_fast.set_tc_delay(diff_delay)
     node_slow.set_tc_delay(0)
-    logger.info("new delay on {}: {}".format(node_slow.sid, diff_delay))
 
 def install_rt(prefix, bpf_file, bpf_func, maps):
     b = BPF(src_file=bpf_file)
@@ -251,7 +270,6 @@ def install_rt(prefix, bpf_file, bpf_func, maps):
 
 def remove_setup(sig, fr):
     daemon_running = False
-    #probes_thread.join()
     N1.remove_tc() # TODO fail
     N2.remove_tc()
 
@@ -277,13 +295,12 @@ def run_daemon(bpf_aggreg, bpf_dm):
 
     bpf_dm["dm_messages"].open_perf_buffer(handle_dm_reply)
 
-    probes_thread = threading.Thread(target=probes_sender)
-    probes_thread.start()
+    threading.Thread(target=probes_sender).start()
 
     while 1:
         bpf_dm.kprobe_poll()
-        #time.sleep(0.01) # tune polling frequency here
 
+@log_traceback
 def get_logger():
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
