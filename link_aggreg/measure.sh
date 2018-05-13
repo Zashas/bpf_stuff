@@ -3,8 +3,10 @@
 BW_SOUTH=50
 BW_NORTH=50
 
-LATENCY_SOUTH=40
+LATENCY_SOUTH=20
 LATENCY_NORTH=40
+JITTER_SOUTH=0
+JITTER_NORTH=10
 
 cleanup()
 {
@@ -16,6 +18,7 @@ cleanup()
 
 	set +e
 	pkill -F /tmp/link_aggreg_fc00::4-128.pid
+	sleep 1
 	ip netns del ns1 2> /dev/null
 	ip netns del ns2 2> /dev/null
 	ip netns del ns3 2> /dev/null
@@ -132,12 +135,12 @@ set -e
 ip netns exec ns2S tc qdisc add dev veth4bis handle 1: root htb default 11
 ip netns exec ns2S tc class add dev veth4bis parent 1: classid 1:1 htb rate 1000Mbps
 ip netns exec ns2S tc class add dev veth4bis parent 1:1 classid 1:11 htb rate ${BW_SOUTH}Mbit
-ip netns exec ns2S tc qdisc add dev veth4bis parent 1:11 handle 10: netem delay ${LATENCY_SOUTH}ms
+ip netns exec ns2S tc qdisc add dev veth4bis parent 1:11 handle 10: netem delay ${LATENCY_SOUTH}ms ${JITTER_SOUTH}ms
 
 ip netns exec ns2N tc qdisc add dev veth8bis handle 2: root htb default 11
 ip netns exec ns2N tc class add dev veth8bis parent 2: classid 2:1 htb rate 1000Mbps
 ip netns exec ns2N tc class add dev veth8bis parent 2:1 classid 2:11 htb rate ${BW_NORTH}Mbit
-ip netns exec ns2N tc qdisc add dev veth8bis parent 2:11 handle 10: netem delay ${LATENCY_NORTH}ms
+ip netns exec ns2N tc qdisc add dev veth8bis parent 2:11 handle 10: netem delay ${LATENCY_NORTH}ms ${JITTER_NORTH}ms
 
 ip netns exec ns2 sysctl net.ipv6.conf.all.forwarding=1 > /dev/null
 ip netns exec ns2N sysctl net.ipv6.conf.all.forwarding=1 > /dev/null
@@ -170,16 +173,28 @@ ip netns exec ns2 tc qdisc add dev veth7 parent 1:1 handle 20: sfq
 #ip netns exec ns2 tc qdisc add dev veth7 parent 1:2 handle 12: netem delay 15ms
 #ip netns exec ns2 tc qdisc add dev veth7 parent 1:3 handle 13: netem delay 20ms
 #ip netns exec ns2 tc qdisc change dev veth7 parent 1:3 handle 13: netem delay 10ms
-ip netns exec ns2 ./link_aggreg.py fc00::4/128 fc00::3a fc00::3c $BW_SOUTH fc00::3b fc00::3c $BW_NORTH fc00::2a/128 veth3 veth7
+ip netns exec ns2 ./link_aggreg.py fc00::4/128 fc00::3a $BW_SOUTH fc00::3b $BW_NORTH fc00::3c fc00::2a/128 veth3 veth7
 
 sleep 1
-ip netns exec ns1 ping -c 20 -I fc00::1 fc00::4
+#for latency in {10..100..10}
+for jitter in $(seq 0 $JITTER_NORTH);
+do
+	#echo "NEW LATENCY: ${latency}"
+	#ip netns exec ns2S tc qdisc change dev veth4bis parent 1:11 handle 10: netem delay ${latency}ms
 
-#ip netns exec ns4 iperf -s -V -D
-#sleep 1
-#ip netns exec ns1 iperf -V -t 3 -l 1350 -M 1350 -B fc00::1 -c fc00::4 -e
-##ip netns exec ns1 iperf -b 150M -V -t 15 -l 1350 -M 1350 -B fc00::1 -c fc00::4 -e -u
+	echo "NEW JITTER: ${jitter}ms"
+	ip netns exec ns2N tc qdisc change dev veth8bis parent 2:11 handle 10: netem delay ${LATENCY_NORTH}ms ${jitter}ms
 
-#killall iperf
+	for i in {0..0}
+	do
+		ip netns exec ns1 ping -c 10 -I fc00::1 fc00::4
+		#ip netns exec ns4 iperf -s -V -D
+		#sleep 1
+		#ip netns exec ns1 iperf -V -t 10 -l 1350 -M 1350 -B fc00::1 -c fc00::4 -e
+		#ip netns exec ns1 iperf -b 150M -V -t 15 -l 1350 -M 1350 -B fc00::1 -c fc00::4 -e -u
 
+		#killall iperf
+	done
+
+done
 exit 0

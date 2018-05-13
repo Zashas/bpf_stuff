@@ -1,8 +1,31 @@
-#include "proto.h"
+#include "bpf_seg6/all.h"
 
-BPF_ARRAY(sids, struct ip6_addr_t, 2);
-BPF_ARRAY(weights, int, 2);
-BPF_ARRAY(wrr, int, 3);
+struct bpf_elf_map __section_maps uplink_wrr_sids = {
+   .type           =       BPF_MAP_TYPE_ARRAY,
+   .id             =       0,
+   .size_key       =       sizeof(uint32_t),
+   .size_value     =       sizeof(struct ip6_addr_t),
+   .max_elem       =       2,
+   .pinning        =       PIN_GLOBAL_NS,
+};
+
+struct bpf_elf_map __section_maps uplink_wrr_weights = {
+   .type           =       BPF_MAP_TYPE_ARRAY,
+   .id             =       1,
+   .size_key       =       sizeof(uint32_t),
+   .size_value     =       sizeof(uint32_t),
+   .max_elem       =       2,
+   .pinning        =       PIN_GLOBAL_NS,
+};
+
+struct bpf_elf_map __section_maps uplink_wrr_state = {
+   .type           =       BPF_MAP_TYPE_ARRAY,
+   .id             =       1,
+   .size_key       =       sizeof(uint32_t),
+   .size_value     =       sizeof(uint32_t),
+   .max_elem       =       3,
+   .pinning        =       PIN_GLOBAL_NS,
+};
 
 static __attribute__((always_inline))
 void build_SRH(char *srh_buf, struct ip6_addr_t *intermediate)
@@ -27,16 +50,19 @@ struct ip6_addr_t *WRR()
 	struct ip6_addr_t *sid1, *sid2;
 	int *w1, *w2;
 	int *last_sid, *prev_cw, *gcd;
+
 	int k=0;
-	w1 = weights.lookup(&k);
-	sid1 = sids.lookup(&k);
-	last_sid = wrr.lookup(&k);
+	sid1 = map_lookup_elem(&uplink_wrr_sids, &k);
+	w1 = map_lookup_elem(&uplink_wrr_weights, &k);
+	last_sid = map_lookup_elem(&uplink_wrr_state, &k);
+
 	k++;
-	w2 = weights.lookup(&k);
-	sid2 = sids.lookup(&k);
-	prev_cw = wrr.lookup(&k);
+	sid2 = map_lookup_elem(&uplink_wrr_sids, &k);
+	w2 = map_lookup_elem(&uplink_wrr_weights, &k);
+	prev_cw = map_lookup_elem(&uplink_wrr_state, &k);
+	
 	k++;
-	gcd = wrr.lookup(&k);
+	gcd = map_lookup_elem(&uplink_wrr_state, &k);
 
 	if (!w1) return NULL;
 	if (!w2) return NULL;
@@ -54,7 +80,7 @@ struct ip6_addr_t *WRR()
 	if (i == 0) {
 		cw = cw - *gcd;
 		if (cw <= 0)
-		    cw = max(*w1, *w2);
+		    cw = *w1 >= *w2 ? *w1 : *w2;
 	}
 	if (i == 0 && *w1 >= cw) {
 		ret = sid1;
@@ -65,7 +91,7 @@ struct ip6_addr_t *WRR()
 		if (i == 0) {
 			cw = cw - *gcd;
 			if (cw <= 0)
-			    cw = max(*w1, *w2);
+			    cw = *w1 >= *w2 ? *w1 : *w2;
 		}
 		if (i == 0 && *w1 >= cw)
 			ret = sid1;
@@ -76,13 +102,14 @@ struct ip6_addr_t *WRR()
 	}
 
 	k=0;
-	wrr.update(&k, &i);
+	map_update_elem(&uplink_wrr_state, &k, &i ,BPF_ANY);
 	k++;
-	wrr.update(&k, &cw);
+	map_update_elem(&uplink_wrr_state, &k, &cw ,BPF_ANY);
 
 	return ret;
 }
 
+__section("main")
 int LB(struct __sk_buff *skb)
 {
 	
@@ -100,7 +127,7 @@ int LB(struct __sk_buff *skb)
 
 	char srh_buf[24];
 	build_SRH(srh_buf, hop);
-	bpf_lwt_push_encap(skb, BPF_LWT_ENCAP_SEG6, (void *)srh_buf, 24);
+	lwt_push_encap(skb, BPF_LWT_ENCAP_SEG6, (void *)srh_buf, 24);
 	return BPF_OK;	
 }
 
