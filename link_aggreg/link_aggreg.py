@@ -11,10 +11,10 @@ from bcc import BPF
 PID = "/tmp/link_aggreg_{}.pid"
 ROOT_QDISC = 1
 PROBES_INTERVAL = 0.5 # in sec
-LEN_DELAYS_BUFF = 10 # number of previous delays value included for the link compensation delay computation
+LEN_DELAYS_BUFF = 20 # number of previous delay values included for the link compensation delay computation
 PROBES_TTL = 50
 
-prefix, N1, N2, dm_prefix, logger = [None] * 5
+prefix, L1, L2, sid_otp_down, sid_otp_down_bytes, sid_otp_up, sid_otp_up_bytes, logger = [None] * 8
 
 class DaemonShutdown(Exception):
     pass
@@ -48,13 +48,13 @@ class DM_TLV(ct.Structure):
                   ("timestamp4_nsec", ct.c_uint32) ]
 
 class DM_Session:
-    node, batch, batch_id, delay_down, delay_up, tc_delay = None, None, None, None, None, None
+    link, batch, batch_id, delay_down, delay_up, tc_delays = None, None, None, None, None, None
 
-    def __init__(self, node, batch, batch_id, tc_delay):
-        self.node = node
+    def __init__(self, link, batch, batch_id, tc_delays):
+        self.link = link
         self.batch = batch
         self.batch_id = batch_id
-        self.tc_delay = tc_delay
+        self.tc_delays = tc_delays
 
     def has_reply(self):
         if self.delay_down and self.delay_up:
@@ -65,33 +65,33 @@ class DM_Session:
         self.delay_down = down
         self.delay_up = up
 
-class Node:
+class Link:
     id = 0
-    sid, sid_bytes = "", b""
-    otp_sid, otp_sid_bytes = "", b""
+    sid_down, sid_down_bytes = "", b""
+    sid_up, sid_up_bytes = "", b""
     weight = 0
-    tc_delay_down = 0
     current_dm_sess_id_recv = -1
     tc_classid, tc_handle = "", ""
     delays_down, delays_up = None, None
+    tc_delay_down, tc_delay_up = 0, 0 # current compensation delays set on this link
 
     # global vars
-    nb_nodes = 0
-    dm_sessions = collections.OrderedDict() # id -> (Node, batch_id, delay_down, delay_up)
+    nb_links = 0
+    dm_sessions = collections.OrderedDict() # id -> (Link, batch_id, delay_down, delay_up)
     current_dm_sess_id_sent = 0
     last_batch_completed = -1
 
-    def __init__(self, sid, otp_sid, weight):
-        self.id = Node.nb_nodes
-        Node.nb_nodes +=1
+    def __init__(self, sid_down, sid_up, weight):
+        self.id = Link.nb_links
+        Link.nb_links +=1
 
-        self.sid, self.otp_sid = sid, otp_sid
-        self.otp_sid_bytes = socket.inet_pton(socket.AF_INET6, otp_sid)
-        self.sid_bytes = socket.inet_pton(socket.AF_INET6, sid)
+        self.sid_down, self.sid_up = sid_down, sid_up
+        self.sid_down_bytes = socket.inet_pton(socket.AF_INET6, sid_down)
+        self.sid_up_bytes = socket.inet_pton(socket.AF_INET6, sid_up)
         self.weight = int(weight)
 
-        self.tc_classid = "{}:{}".format(ROOT_QDISC, self.id + 2) # class ids must start at 2
-        self.tc_handle = "1{}:".format(self.id + 2)
+        self.tc_classids = ["{}:{}{}".format(ROOT_QDISC, self.id + 2, i) for i in range(2)] # class ids must start at 2
+        self.tc_handles = ["1{}{}:".format(self.id + 2, i) for i in range(2)]
         self.install_tc()
         self.delays_down = collections.deque([], LEN_DELAYS_BUFF)
         self.delays_up = collections.deque([], LEN_DELAYS_BUFF)
@@ -106,48 +106,41 @@ class Node:
         self.delays_down.append(delay_down)
         self.delays_up.append(delay_up)
 
-    def set_tc_delay(self, delay):
-        self.tc_delay_down = delay
-        delay_ms = "{}ms".format(int(delay*1000))
-        #tc qdisc change dev veth7 parent 1:3 handle 13: netem delay 10ms
-        for iface in ifaces:
-            ret = subprocess.run(["tc", "qdisc", "change", "dev", iface, "parent", self.tc_classid, "handle", self.tc_handle, "netem", "delay", delay_ms])
-            if ret.returncode:
-                raise Node.ConfigError("Could not change tc qdisc netem for dev {}: {}".format(iface, " ".join(ret.args)))
+    def set_tc_delays(self, delay_down, delay_up):
+        self.tc_delay_down = delay_down
+        self.tc_delay_up = delay_up
+        delay_down_ms = "{}ms".format(int(delay_down*1000))
+        delay_up_ms = "{}ms".format(int(delay_up*1000))
+
+        for iface in ifaces_down:
+            # update downlink delay compensation
+            exec_cmd(["tc", "qdisc", "change", "dev", iface, "parent", self.tc_classids[0], "handle", self.tc_handles[0], "netem", "delay", delay_down_ms])
+
+        for iface in ifaces_up:
+            # update downlink delay compensation
+            exec_cmd(["tc", "qdisc", "change", "dev", iface, "parent", self.tc_classids[0], "handle", self.tc_handles[0], "netem", "delay", delay_up_ms])
+
 
     def install_tc(self):
         parent = "{}:".format(ROOT_QDISC)
 
-        #ip netns exec ns2 tc class add dev veth7 parent 1: classid 1:2 htb rate 1000Mbps
-        for iface in ifaces:
-            ret = subprocess.run(["tc", "class", "add", "dev", iface, "parent", parent, "classid", self.tc_classid, "htb", "rate", "1000Mbps"])
-            if ret.returncode:
-                raise Node.ConfigError("Could not set tc class for dev {}: {}".format(iface, " ".join(ret.args)))
+        # tc setup for downlink delay compensation
+        for iface in ifaces_down:
+            exec_cmd(["tc", "class", "add", "dev", iface, "parent", parent, "classid", self.tc_classids[0], "htb", "rate", "1000Mbps"])
+            exec_cmd(["tc", "filter", "add", "dev", iface, "protocol", "ipv6", "parent", parent, "prio", "1", "u32", "match", "ip6", "dst", self.sid_up, "flowid", self.tc_classids[0]])
+            exec_cmd(["tc", "qdisc", "add", "dev", iface, "parent", self.tc_classids[0], "handle", self.tc_handles[0], "netem", "delay", "0ms"])
 
-            #tc filter add dev veth7 protocol ipv6 parent 1: prio 1 u32 match ip6 dst fc00::3a flowid 1:2
-            ret = subprocess.run(["tc", "filter", "add", "dev", iface, "protocol", "ipv6", "parent", parent, "prio", "1", "u32", "match", "ip6", "dst", self.sid, "flowid", self.tc_classid])
-            if ret.returncode:
-                raise Node.ConfigError("Could not set tc filter for dev {}: {}".format(iface, " ".join(ret.args)))
-
-            #tc qdisc add dev veth7 parent 1:2 handle 12: netem delay 15ms
-            ret = subprocess.run(["tc", "qdisc", "add", "dev", iface, "parent", self.tc_classid, "handle", self.tc_handle, "netem", "delay", "0ms"])
-            if ret.returncode:
-                raise Node.ConfigError("Could not set tc qdisc netem for dev {}: {}".format(iface, " ".join(ret.args)))
+        for iface in ifaces_up:
+            exec_cmd(["tc", "class", "add", "dev", iface, "parent", parent, "classid", self.tc_classids[0], "htb", "rate", "1000Mbps"])
+            exec_cmd(["tc", "filter", "add", "dev", iface, "protocol", "ipv6", "parent", parent, "prio", "1", "u32", "match", "ip6", "dst", self.sid_down, "flowid", self.tc_classids[0]])
+            exec_cmd(["tc", "qdisc", "add", "dev", iface, "parent", self.tc_classids[0], "handle", self.tc_handles[0], "netem", "delay", "0ms"])
 
     def remove_tc(self):
         parent = "{}:".format(ROOT_QDISC)
 
-        #ip netns exec ns2 tc class add dev veth7 parent 1: classid 1:2 htb rate 1000Mbps
-        for iface in ifaces:
-            ret = subprocess.run(["tc", "class", "delete", "dev", iface, "parent", parent, "classid", self.tc_classid, "htb", "rate", "1000Mbps"], stderr=subprocess.PIPE)
-            if ret.returncode:
-                stderr = ret.stderr.decode('ascii').strip()
-                logger.error("Could not delete tc class for dev {}: {} ({})".format(iface, stderr, " ".join(ret.args)))
-
-            ret = subprocess.run(["tc", "filter", "delete", "dev", iface, "protocol", "ipv6", "parent", parent, "prio", "1", "u32", "match", "ip6", "dst", self.sid, "flowid", self.tc_classid])
-            if ret.returncode:
-                logger.error("Could not delete tc filter for dev {}: {}".format(iface, " ".join(ret.args)))
-
+        for iface in ifaces_down:
+            exec_cmd(["tc", "class", "delete", "dev", iface, "parent", parent, "classid", self.tc_classids[0], "htb", "rate", "1000Mbps"], log=True)
+            exec_cmd(["tc", "filter", "delete", "dev", iface, "protocol", "ipv6", "parent", parent, "prio", "1", "u32", "match", "ip6", "dst", self.sid_up, "flowid", self.tc_classids[0]], log=True)
 
     class ConfigError(Exception):
         pass
@@ -161,12 +154,26 @@ def log_traceback(func):
 
     return f
 
-def send_delay_probe(node):
-    sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-    sock.bind(('', 9999))
+def exec_cmd(cmd, log=False):
+    ret = subprocess.run(cmd, stderr=subprocess.PIPE)
+    if ret.returncode:
+        stderr = ret.stderr.decode('ascii').strip()
+        msg = "Error executing the following shell command: {} -- {}".format(" ".join(ret.args), stderr)
 
-    src_rcv = dm_prefix.split('/')[0]
-    segments = (bytes(16), node.otp_sid_bytes, node.sid_bytes)
+        if log:
+            logger.error(msg)
+        else:
+            raise Link.ConfigError("Error executing the following shell command: {}".format(" ".join(ret.args)))
+
+    return ret
+
+def send_delay_probe(link):
+    #UDP payload is never used, we just rely on the SRH
+    sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) 
+    sock.bind(('', 9999)) # TODO
+
+    # the first segment is filled by the kernel with the address given in sendto()
+    segments = (bytes(16), link.sid_down_bytes, sid_otp_up_bytes, link.sid_up_bytes)
 
     hdrlen = (48 + len(segments) * 16) >> 3
     srh_base = struct.pack("!BBBBBBH", 0, hdrlen, 4, len(segments) - 1, len(segments) - 1, 0, 0)
@@ -182,12 +189,12 @@ def send_delay_probe(node):
     dm.timestamp1_sec = socket.htonl(int(ts))
     dm.timestamp1_nsec = socket.htonl(int((ts % 1) * 10**9))
 
-    dm.session_id = Node.current_dm_sess_id_sent
-    Node.current_dm_sess_id_sent = (Node.current_dm_sess_id_sent + 1) % (2**24)
+    dm.session_id = Link.current_dm_sess_id_sent
+    Link.current_dm_sess_id_sent = (Link.current_dm_sess_id_sent + 1) % (2**24)
 
     srh = srh_base + reduce(lambda x,y: x+y, segments) + bytes(dm)
     sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_RTHDR, srh)
-    sock.sendto(b"", (src_rcv, 9999))
+    sock.sendto(b"", (sid_otp_down, 9999))
     sock.close()
 
     return dm.session_id
@@ -203,19 +210,19 @@ class ProbesSender(threading.Thread):
         while not self.shutdown_flag.is_set():
             batch = []
 
-            for node in (N1, N2):
-                sessid = send_delay_probe(node)
-                session = DM_Session(node, batch, current_batch_id, node.tc_delay_down)
+            for link in (L1, L2):
+                sessid = send_delay_probe(link)
+                session = DM_Session(link, batch, current_batch_id, (link.tc_delay_down, link.tc_delay_up))
                 batch.append(session)
 
-                Node.dm_sessions[sessid] = session
+                Link.dm_sessions[sessid] = session
 
             current_batch_id += 1
 
             # remove unanswered probes older than PROBES_TTL batches
-            for k,v in Node.dm_sessions.copy().items():
+            for k,v in Link.dm_sessions.copy().items():
                 if current_batch_id > v.batch_id + PROBES_TTL:
-                    del Node.dm_sessions[k]
+                    del Link.dm_sessions[k]
 
             time.sleep(PROBES_INTERVAL)
 
@@ -228,36 +235,41 @@ def handle_dm_reply(cpu, data, size):
         return val
 
     dm = ct.cast(data, ct.POINTER(DM_TLV)).contents
-    if not dm.session_id in Node.dm_sessions:
+    if not dm.session_id in Link.dm_sessions:
         return
-    session = Node.dm_sessions[dm.session_id]
+    session = Link.dm_sessions[dm.session_id]
 
     t1 = ieee_to_float(dm.timestamp1_sec, dm.timestamp1_nsec)
     t2 = ieee_to_float(dm.timestamp2_sec, dm.timestamp2_nsec)
     t3 = ieee_to_float(dm.timestamp3_sec, dm.timestamp3_nsec)
     session.store_delays(t2 - t1, t4 - t3)
 
-    if session.batch_id > Node.last_batch_completed and all(map(lambda x: x.has_reply(), session.batch)):
+    if session.batch_id > Link.last_batch_completed and all(map(lambda x: x.has_reply(), session.batch)):
         update_tc_delays(session.batch_id, session.batch)
 
 def update_tc_delays(batch_id, batch):
-    Node.last_batch_completed = batch_id
+    Link.last_batch_completed = batch_id
 
+    logger.info("New batch")
     for dm in batch:
-        dm.node.add_delays(dm.delay_down - dm.tc_delay, dm.delay_up)
+        logger.info("{}: DOWN={} UP={}".format(dm.link.sid_up, dm.delay_down - dm.tc_delays[0], dm.delay_up - dm.tc_delays[1]))
+        dm.link.add_delays(dm.delay_down - dm.tc_delays[0], dm.delay_up - dm.tc_delays[1])
 
-    delay1 = N1.get_avg_delays()[0]
-    delay2 = N2.get_avg_delays()[0]
-    if delay1 < delay2:
-        node_fast, node_slow = N1, N2
-        diff_delay = delay2 - delay1
-    else:
-        node_fast, node_slow = N2, N1
-        diff_delay = delay1 - delay2
-    logger.info("new delay on {}: {} = {} & {}".format(node_slow.sid, diff_delay, delay1, delay2))
+    delays_L1 = L1.get_avg_delays()
+    delays_L2 = L2.get_avg_delays()
 
-    node_fast.set_tc_delay(diff_delay)
-    node_slow.set_tc_delay(0)
+    compensations = ([0, 0], [0, 0]) # 2x2 delay compensation matrix
+    for i in range(2): # compute delay down, then up
+        if delays_L1[i] < delays_L2[i]:
+            compensations[0][i] = delays_L2[i] - delays_L1[i]
+        else:
+            compensations[1][i] = delays_L1[i] - delays_L2[i]
+        #logger.info("new delay on {}: {} = {} & {}".format(link_slow.sid_up, diff_delay, delay1, delay2))
+
+    logger.info("New compensation matrix: {}".format(repr(compensations)))
+    logger.info('')
+    L1.set_tc_delays(*compensations[0])
+    L2.set_tc_delays(*compensations[1])
 
 def install_rt(prefix, bpf_file, bpf_func, maps):
     b = BPF(src_file=bpf_file)
@@ -268,7 +280,7 @@ def install_rt(prefix, bpf_file, bpf_func, maps):
         fds.append(b[m].map_fd)
 
     ipr = IPRoute()
-    idx = ipr.link_lookup(ifname=ifaces[0])[0]
+    idx = ipr.link_lookup(ifname=ifaces_down[0])[0]
     
     encap = {'type':'bpf', 'in':{'fd':fn.fd, 'name':fn.name}}
     ipr.route("add", dst=prefix, oif=idx, encap=encap)
@@ -283,13 +295,13 @@ def run_daemon(bpf_aggreg, bpf_dm):
     signal.signal(signal.SIGINT, remove_setup)
 
     ct_ip = ct.c_ubyte * 16
-    bpf_aggreg["sids"][0] = ct_ip.from_buffer_copy(N1.sid_bytes)
-    bpf_aggreg["sids"][1] = ct_ip.from_buffer_copy(N2.sid_bytes)
-    bpf_aggreg["weights"][0] = ct.c_int(N1.weight)
-    bpf_aggreg["weights"][1] = ct.c_int(N2.weight)
+    bpf_aggreg["sids"][0] = ct_ip.from_buffer_copy(L1.sid_up_bytes)
+    bpf_aggreg["sids"][1] = ct_ip.from_buffer_copy(L2.sid_up_bytes)
+    bpf_aggreg["weights"][0] = ct.c_int(L1.weight)
+    bpf_aggreg["weights"][1] = ct.c_int(L2.weight)
     bpf_aggreg["wrr"][0] = ct.c_int(-1)
     bpf_aggreg["wrr"][1] = ct.c_int(0)
-    bpf_aggreg["wrr"][2] = ct.c_int(math.gcd(N1.weight, N2.weight))
+    bpf_aggreg["wrr"][2] = ct.c_int(math.gcd(L1.weight, L2.weight))
 
     bpf_dm["dm_messages"].open_perf_buffer(handle_dm_reply)
 
@@ -302,13 +314,13 @@ def run_daemon(bpf_aggreg, bpf_dm):
 
     except DaemonShutdown:
         probes_sender.shutdown_flag.set()
-        N1.remove_tc() # TODO fail
-        N2.remove_tc()
+        L1.remove_tc() # TODO fail
+        L2.remove_tc()
 
         ipr = IPRoute()
-        idx = ipr.link_lookup(ifname=ifaces[0])[0]
+        idx = ipr.link_lookup(ifname=ifaces_down[0])[0]
         ipr.route("del", dst=prefix, oif=idx)
-        ipr.route("del", dst=dm_prefix, oif=idx)
+        ipr.route("del", dst=sid_otp_down + '/128', oif=idx)
 
         sys.exit(0)
 
@@ -327,18 +339,22 @@ def get_logger():
 
 if __name__ == '__main__':
     if len(sys.argv) < 9:
-        print("Format: ./link_aggreg.py PREFIX SID1 WEIGHT1 SID2 WEIGHT2 SID-OTP DM-PREFIX DEV1 [DEV2 ...]")
+        print("Format: ./link_aggreg.py PREFIX SID1-UP SID1-DOWN WEIGHT1 SID2-UP SID2-DOWN WEIGHT2 SID-OTP-UP SID-OTP-DOWN DEV-DOWN1,DEV-DOWN2,... DEV-UP1,DEV-UP2,...")
         sys.exit(1)
 
-    prefix, sid1, w1, sid2, w2, sid_otp, dm_prefix, *ifaces = sys.argv[1:]
-    N1 = Node(sid1, sid_otp, w1)
-    N2 = Node(sid2, sid_otp, w2)
-
+    prefix, sid1_up, sid1_down, w1, sid2_up, sid2_down, w2, sid_otp_up, sid_otp_down, ifaces_down, ifaces_up = sys.argv[1:]
+    ifaces_down = ifaces_down.split(',')
+    ifaces_up = ifaces_up.split(',')
+    L1 = Link(sid1_down, sid1_up, w1)
+    L2 = Link(sid2_down, sid2_up, w2)
+    sid_otp_down_bytes = socket.inet_pton(socket.AF_INET6, sid_otp_down)
+    sid_otp_up_bytes = socket.inet_pton(socket.AF_INET6, sid_otp_up)
+    
     bpf_aggreg, fds_aggreg = install_rt(prefix, 'link_aggreg_bpf.c', 'LB', ('sids', 'weights', 'wrr'))
     rt_name = prefix.replace('/','-')
 
-    bpf_dm, fds_dm = install_rt(dm_prefix, 'dm_recv_bpf.c', 'DM_recv', ('dm_messages',))
-
+    bpf_dm, fds_dm = install_rt(sid_otp_down + '/128', 'dm_recv_bpf.c', 'DM_recv', ('dm_messages',))
+    
     logger, fd_logger = get_logger()
 
     keep_fds = [fd_logger] + fds_aggreg + fds_dm
