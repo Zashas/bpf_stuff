@@ -1,24 +1,28 @@
 #include "proto.h"
 
-BPF_ARRAY(sids, struct ip6_addr_t, 2);
+BPF_ARRAY(sids, struct ip6_addr_t, 3);
 BPF_ARRAY(weights, int, 2);
 BPF_ARRAY(wrr, int, 3);
 
 static __attribute__((always_inline))
-void build_SRH(char *srh_buf, struct ip6_addr_t *intermediate)
+void build_SRH(char *srh_buf, struct ip6_addr_t *intermediate, struct ip6_addr_t *dst)
 {
 	struct ip6_srh_t *srh = (struct ip6_srh_t *)srh_buf;
 	srh->nexthdr = 0;
 	srh->type = 4;
 	srh->flags = 0;
 	srh->tag = 0;
-	srh->hdrlen = 2;
-	srh->segments_left = 0;
-	srh->first_segment = 0;
+	srh->hdrlen = 4;
+	srh->segments_left = 1;
+	srh->first_segment = 1;
 
 	struct ip6_addr_t *seg0 = (struct ip6_addr_t *)((char*) srh + sizeof(*srh));
-	seg0->hi = intermediate->hi;
-	seg0->lo = intermediate->lo;
+	seg0->hi = dst->hi;
+	seg0->lo = dst->lo;
+
+	struct ip6_addr_t *seg1 = (struct ip6_addr_t *)((char*) seg0 + sizeof(struct ip6_addr_t));
+	seg1->hi = intermediate->hi;
+	seg1->lo = intermediate->lo;
 }
 
 static __attribute__((always_inline))
@@ -85,7 +89,6 @@ struct ip6_addr_t *WRR()
 
 int LB(struct __sk_buff *skb)
 {
-	
 	void *data_end = (void *)(long)skb->data_end;
 	void *cursor   = (void *)(long)skb->data;
 
@@ -98,9 +101,15 @@ int LB(struct __sk_buff *skb)
 	if (hop == NULL)
 		return BPF_DROP;
 
-	char srh_buf[24];
-	build_SRH(srh_buf, hop);
-	bpf_lwt_push_encap(skb, BPF_LWT_ENCAP_SEG6, (void *)srh_buf, 24);
+	struct ip6_addr_t *sid_dst;
+	int k = 2;
+	sid_dst = sids.lookup(&k);
+	if (sid_dst == NULL)
+		return BPF_DROP;
+
+	char srh_buf[40];
+	build_SRH(srh_buf, hop, sid_dst);
+	bpf_lwt_push_encap(skb, BPF_LWT_ENCAP_SEG6, (void *)srh_buf, 40);
 	return BPF_OK;	
 }
 

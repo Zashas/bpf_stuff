@@ -176,7 +176,7 @@ set -e
 ./netns.py ns3 cpe_bpf/end_otp_usr
 
 ./netns.py ns3 /home/math/shared/iproute2/ip/ip -6 route add fc00::1 encap bpf in obj cpe_bpf/uplink_wrr_bpf.o section main dev veth4
-./netns.py ns3 cpe_bpf/uplink_wrr_usr fc00::2a ${BW_SOUTH_UP} fc00::2b ${BW_NORTH_UP}
+./netns.py ns3 cpe_bpf/uplink_wrr_usr fc00::2 fc00::2a ${BW_SOUTH_UP} fc00::2b ${BW_NORTH_UP}
 
 ip netns exec ns2S tc qdisc add dev simu-SE handle 1: root htb default 11
 ip netns exec ns2S tc class add dev simu-SE parent 1: classid 1:1 htb rate 1000Mbps
@@ -240,7 +240,7 @@ ip netns exec ns2 tc class add dev veth7-brW parent 1: classid 1:1 htb rate 1000
 ip netns exec ns2 tc filter add dev veth7-brW protocol all parent 1: prio 2 u32 match u32 0 0 flowid 1:1
 ip netns exec ns2 tc qdisc add dev veth7-brW parent 1:1 handle 20: sfq
 
-ip netns exec ns2 ./link_aggreg.py fc00::4/128 fc00::3a fc00::2a $BW_SOUTH_DOWN fc00::3b fc00::2b $BW_NORTH_DOWN fc00::3c fc00::2c veth3,veth7 veth3-brW,veth7-brW
+ip netns exec ns2 ./link_aggreg.py fc00::4/128 fc00::3 fc00::3a fc00::2a $BW_SOUTH_DOWN fc00::3b fc00::2b $BW_NORTH_DOWN fc00::3c fc00::2c veth3,veth7 veth3-brW,veth7-brW
 
 sleep 1
 #for latency in {10..100..10}
@@ -254,17 +254,17 @@ sleep 1
 
 	#for i in {0..0}
 	#do
-		ip netns exec ns1 ping -c 15 -I fc00::1 fc00::4
+		ip netns exec ns1 ping -c 5 -I fc00::1 fc00::4
 
-		ip netns exec ns4 iperf -s -V -D
-		sleep 1
-		ip netns exec ns1 iperf -V -t 10 -l 1350 -M 1350 -B fc00::1 -c fc00::4 -e
-		killall iperf
+		#ip netns exec ns4 iperf -s -V -D
+		#sleep 1
+		#ip netns exec ns1 iperf -V -t 10 -l 1350 -M 1350 -B fc00::1 -c fc00::4 -e
+		#killall iperf
 
-		ip netns exec ns1 iperf -s -V -D
-		sleep 1
-		ip netns exec ns4 iperf -V -t 10 -l 1350 -M 1350 -B fc00::4 -c fc00::1 -e
-		killall iperf
+		#ip netns exec ns1 iperf -s -V -D
+		#sleep 1
+		#ip netns exec ns4 iperf -V -t 10 -l 1350 -M 1350 -B fc00::4 -c fc00::1 -e
+		#killall iperf
 
 	#done
 

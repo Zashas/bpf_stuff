@@ -58,24 +58,24 @@ int bpf_update_elem(int fd, void *key, void *value, uint64_t flags)
 
 int main (int argc, char *argv[])
 {
-	struct in6_addr sid1, sid2;
+	struct in6_addr sid1, sid2, sid_agg;
 	int w1, w2, gcd;
 	int cw = 0;
 	int last_sid = -1;
 
-	if (argc != 5) {
-		printf("Error, needed parameters: ./uplink_wrr_usr SID1 W1 SID2 W2");
+	if (argc != 6) {
+		printf("Error, needed parameters: ./uplink_wrr_usr SID-AGG SID1 W1 SID2 W2");
 		return -1;
 	}
 
-	if (!inet_pton(AF_INET6, argv[1], &sid1) || !inet_pton(AF_INET6, argv[3], &sid2)) {
+	if (!inet_pton(AF_INET6, argv[2], &sid1) || !inet_pton(AF_INET6, argv[4], &sid2) || !inet_pton(AF_INET6, argv[1], &sid_agg)) {
 		printf("Error: SIDs must be valid IPv6 addresses.");
 		printf("./uplink_wrr_usr SID1 W1 SID2 W2");
 		return -1;
 	}
 
-	w1 = atoi(argv[2]);
-	w2 = atoi(argv[4]);
+	w1 = atoi(argv[3]);
+	w2 = atoi(argv[5]);
 	if (w1 <= 0 || w2 <= 0) {
 		printf("Error: weights must be positive numbers.");
 		printf("./uplink_wrr_usr SID1 W1 SID2 W2");
@@ -113,6 +113,7 @@ int main (int argc, char *argv[])
 	bpf_update_elem(map_fd[2], &key, &cw, BPF_ANY);
 
 	key++;
+	bpf_update_elem(map_fd[0], &key, &sid_agg, BPF_ANY);
 	bpf_update_elem(map_fd[2], &key, &gcd, BPF_ANY);
 
 	return 0;

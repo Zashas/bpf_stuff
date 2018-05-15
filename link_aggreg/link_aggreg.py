@@ -297,6 +297,7 @@ def run_daemon(bpf_aggreg, bpf_dm):
     ct_ip = ct.c_ubyte * 16
     bpf_aggreg["sids"][0] = ct_ip.from_buffer_copy(L1.sid_up_bytes)
     bpf_aggreg["sids"][1] = ct_ip.from_buffer_copy(L2.sid_up_bytes)
+    bpf_aggreg["sids"][2] = ct_ip.from_buffer_copy(socket.inet_pton(socket.AF_INET6, sid_cpe))
     bpf_aggreg["weights"][0] = ct.c_int(L1.weight)
     bpf_aggreg["weights"][1] = ct.c_int(L2.weight)
     bpf_aggreg["wrr"][0] = ct.c_int(-1)
@@ -338,11 +339,11 @@ def get_logger():
     return logger, fh.stream.fileno()
 
 if __name__ == '__main__':
-    if len(sys.argv) < 9:
-        print("Format: ./link_aggreg.py PREFIX SID1-UP SID1-DOWN WEIGHT1 SID2-UP SID2-DOWN WEIGHT2 SID-OTP-UP SID-OTP-DOWN DEV-DOWN1,DEV-DOWN2,... DEV-UP1,DEV-UP2,...")
+    if len(sys.argv) < 10:
+        print("Format: ./link_aggreg.py PREFIX SID-CPE SID1-UP SID1-DOWN WEIGHT1 SID2-UP SID2-DOWN WEIGHT2 SID-OTP-UP SID-OTP-DOWN DEV-DOWN1,DEV-DOWN2,... DEV-UP1,DEV-UP2,...")
         sys.exit(1)
 
-    prefix, sid1_up, sid1_down, w1, sid2_up, sid2_down, w2, sid_otp_up, sid_otp_down, ifaces_down, ifaces_up = sys.argv[1:]
+    prefix, sid_cpe, sid1_up, sid1_down, w1, sid2_up, sid2_down, w2, sid_otp_up, sid_otp_down, ifaces_down, ifaces_up = sys.argv[1:]
     ifaces_down = ifaces_down.split(',')
     ifaces_up = ifaces_up.split(',')
     L1 = Link(sid1_down, sid1_up, w1)
