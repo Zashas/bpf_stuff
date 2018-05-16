@@ -10,11 +10,12 @@ from bcc import BPF
 
 PID = "/tmp/link_aggreg_{}.pid"
 ROOT_QDISC = 1
-PROBES_INTERVAL = 0.5 # in sec
-LEN_DELAYS_BUFF = 20 # number of previous delay values included for the link compensation delay computation
+PROBES_INTERVAL = 1 # in sec
+LEN_DELAYS_BUFF = 1 # number of previous delay values included for the link compensation delay computation
 PROBES_TTL = 50
 
 prefix, L1, L2, sid_otp_down, sid_otp_down_bytes, sid_otp_up, sid_otp_up_bytes, logger = [None] * 8
+probes_sender = None
 
 class DaemonShutdown(Exception):
     pass
@@ -92,6 +93,7 @@ class Link:
 
         self.tc_classids = ["{}:{}{}".format(ROOT_QDISC, self.id + 2, i) for i in range(2)] # class ids must start at 2
         self.tc_handles = ["1{}{}:".format(self.id + 2, i) for i in range(2)]
+        self.tc_fwmark = str(self.id + 10)
         self.install_tc()
         self.delays_down = collections.deque([], LEN_DELAYS_BUFF)
         self.delays_up = collections.deque([], LEN_DELAYS_BUFF)
@@ -125,14 +127,18 @@ class Link:
         parent = "{}:".format(ROOT_QDISC)
 
         # tc setup for downlink delay compensation
+        #exec_cmd(["ip6tables", "-I", "FORWARD", "-d", self.sid_up, "-j", "MARK", "--set-mark", self.tc_fwmark])
         for iface in ifaces_down:
             exec_cmd(["tc", "class", "add", "dev", iface, "parent", parent, "classid", self.tc_classids[0], "htb", "rate", "1000Mbps"])
             exec_cmd(["tc", "filter", "add", "dev", iface, "protocol", "ipv6", "parent", parent, "prio", "1", "u32", "match", "ip6", "dst", self.sid_up, "flowid", self.tc_classids[0]])
+            #exec_cmd(["tc", "filter", "add", "dev", iface, "protocol", "ipv6", "parent", parent, "prio", "1", "handle", self.tc_fwmark, "fw", "flowid", self.tc_classids[0]])
             exec_cmd(["tc", "qdisc", "add", "dev", iface, "parent", self.tc_classids[0], "handle", self.tc_handles[0], "netem", "delay", "0ms"])
 
+        #exec_cmd(["ip6tables", "-I", "INPUT", "-d", self.sid_down, "-j", "MARK", "--set-mark", self.tc_fwmark])
         for iface in ifaces_up:
             exec_cmd(["tc", "class", "add", "dev", iface, "parent", parent, "classid", self.tc_classids[0], "htb", "rate", "1000Mbps"])
             exec_cmd(["tc", "filter", "add", "dev", iface, "protocol", "ipv6", "parent", parent, "prio", "1", "u32", "match", "ip6", "dst", self.sid_down, "flowid", self.tc_classids[0]])
+            #exec_cmd(["tc", "filter", "add", "dev", iface, "protocol", "ipv6", "parent", parent, "prio", "1", "handle", self.tc_fwmark, "fw", "flowid", self.tc_classids[0]])
             exec_cmd(["tc", "qdisc", "add", "dev", iface, "parent", self.tc_classids[0], "handle", self.tc_handles[0], "netem", "delay", "0ms"])
 
     def remove_tc(self):
@@ -149,6 +155,8 @@ def log_traceback(func):
     def f(*args, **kwargs):
         try:
             return func(*args, **kwargs) 
+        except DaemonShutdown:
+            kill_daemon()
         except Exception:
             logger.error(traceback.format_exc()) 
 
@@ -163,7 +171,7 @@ def exec_cmd(cmd, log=False):
         if log:
             logger.error(msg)
         else:
-            raise Link.ConfigError("Error executing the following shell command: {}".format(" ".join(ret.args)))
+            raise Link.ConfigError(msg)
 
     return ret
 
@@ -314,16 +322,19 @@ def run_daemon(bpf_aggreg, bpf_dm):
             bpf_dm.kprobe_poll()
 
     except DaemonShutdown:
-        probes_sender.shutdown_flag.set()
-        L1.remove_tc() # TODO fail
-        L2.remove_tc()
+        kill_daemon()
 
-        ipr = IPRoute()
-        idx = ipr.link_lookup(ifname=ifaces_down[0])[0]
-        ipr.route("del", dst=prefix, oif=idx)
-        ipr.route("del", dst=sid_otp_down + '/128', oif=idx)
+def kill_daemon():
+    probes_sender.shutdown_flag.set()
+    L1.remove_tc() # TODO fail
+    L2.remove_tc()
 
-        sys.exit(0)
+    ipr = IPRoute()
+    idx = ipr.link_lookup(ifname=ifaces_down[0])[0]
+    ipr.route("del", dst=prefix, oif=idx)
+    ipr.route("del", dst=sid_otp_down + '/128', oif=idx)
+
+    sys.exit(0)
 
 @log_traceback
 def get_logger():
