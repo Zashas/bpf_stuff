@@ -1,23 +1,32 @@
 #include "proto.h"
 #include "libseg6.c"
 
-#define SR6_TLV_OAM 8
-#define SR6_TLV_URO 131
-#define OAM_DUMP_RT 1
+#define SR6_TLV_OAM_NH_REQ 100
+#define SR6_TLV_OAM_NH_REPLY 101
+#define MAX_NH 16
 
-BPF_PERF_OUTPUT(oam_requests);
+BPF_HASH(link_local_table, struct ip6_addr_t, struct ip6_addr_t);
 
-struct tlv_oam_t {
+struct oam_nh_request_t {
 	uint8_t tlv_type;
 	uint8_t len;
-	uint8_t type;
-	uint8_t reserved;
 	uint16_t session_id;
-	uint16_t reserved2;
-	uint8_t args[16];
+	struct ip6_addr_t dst;
+} BPF_PACKET_HEADER;
+
+struct oam_nh_reply_t {
+	uint8_t tlv_type;
+	uint8_t len;
+	uint8_t nb_nh;
+	uint8_t reserved;
+	struct ip6_addr_t nexthops[MAX_NH];
 } BPF_PACKET_HEADER;
 
 int SEG6_OAM(struct __sk_buff *skb) {
+	struct oam_nh_request_t tlv_req;
+	struct oam_nh_reply_t tlv_reply;
+	int ret;
+
 	struct ip6_srh_t *srh = seg6_get_srh(skb);
 	if (!srh)
 		return BPF_DROP;
@@ -28,15 +37,42 @@ int SEG6_OAM(struct __sk_buff *skb) {
 	if ((void *)ip + sizeof(*ip) > (void *)(long)skb->data_end)
 		return BPF_DROP;
 
-	struct tlv_oam_t tlv;
-	int cursor = seg6_find_tlv(skb, srh, SR6_TLV_OAM, sizeof(tlv));
+	int cursor = seg6_find_tlv(skb, srh, SR6_TLV_OAM_NH_REQ, sizeof(tlv_req));
 	if (cursor < 0) // no OAM TLV found, nevermind
 		return BPF_OK;
-	if (bpf_skb_load_bytes(skb, cursor, &tlv, sizeof(tlv)) < 0)
+	if (bpf_skb_load_bytes(skb, cursor, &tlv_req, sizeof(tlv_req)) < 0)
 		return BPF_DROP; // error
 
-	oam_requests.perf_submit_skb(skb, skb->len, &tlv, sizeof(tlv));
-	return BPF_DROP; // daemon will send the packet
+	memset(&tlv_reply.nexthops, 0, MAX_NH << 4);
+	ret = bpf_ipv6_fib_multipath_nh(skb, &tlv_req.dst, 16, &tlv_reply.nexthops, MAX_NH << 4);
+	if (ret < 0)
+		return BPF_DROP;
+
+	tlv_reply.nb_nh = ret;
+	tlv_reply.reserved = 0;
+	tlv_reply.tlv_type = SR6_TLV_OAM_NH_REPLY;
+	tlv_reply.len = (tlv_reply.nb_nh << 4) + 2 * sizeof(uint8_t);
+
+	// Convert potential link local addresses to global ones
+	#pragma clang loop unroll(full)
+	for (int i=0; i < MAX_NH; i++) {
+		if (i >= tlv_reply.nb_nh)
+			break;
+
+		struct ip6_addr_t *addr = &tlv_reply.nexthops[i];
+		// check if addr is in fe80::/10
+		if ((bpf_htonll(addr->hi) >> 56) == 0xfe &&
+		    !((((bpf_htonll(addr->hi) >> 54) & 3) ^ 2))) {
+			struct ip6_addr_t *gaddr = link_local_table.lookup(addr);
+			if (gaddr != NULL)
+				*addr = *gaddr;
+		}
+	}
+
+	ret = seg6_add_tlv(skb, srh, -1, (struct sr6_tlv_t *)&tlv_reply, tlv_reply.len + 2);
+	if (ret)
+		return BPF_DROP;
+	return BPF_OK;
 }
 
 char __license[] __section("license") = "GPL";

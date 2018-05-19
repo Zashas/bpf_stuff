@@ -149,7 +149,7 @@ int seg6_add_tlv(struct __sk_buff *skb, struct ip6_srh_t *srh, uint32_t tlv_off,
 	if (err)
 		return err;
 
-	err = bpf_lwt_seg6_store_bytes(skb, tlv_off, (void *)itlv, tlv_size);
+	err = bpf_lwt_seg6_store_bytes(skb, tlv_off, (void *)itlv, sizeof(*itlv) + itlv->len);
 	if (err)
 		return err;
 

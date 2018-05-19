@@ -6,7 +6,9 @@ ICMP_ECHO_REQ = 128
 ICMP_OAM_REQ = 100
 TRACERT_PORT = 33434
 RTHDR_TYPE = 4
-TLV_OAM_TYPE = 8
+SR6_TLV_OAM_NH_REQ = 100
+SR6_TLV_OAM_NH_REPLY = 101
+SR6_TLV_PADDING = 4
 SRH_FLAG_OAM = 32
 TLV_OAM_RD = 1
 TRIES_PER_PROBE = 1
@@ -87,14 +89,14 @@ def build_srh(dst, segments):
     return srh
 
 
-def send_oam_probe(src, dst, target, segments):
+def send_oam_probe(src, dst, target):
     oam_dst = socket.inet_pton(socket.AF_INET6, dst) # for the replier, regular SID -> OAM SID
     oam_dst = oam_dst[:-2] + b'\x00\x08'
     oam_dst = socket.inet_ntop(socket.AF_INET6, oam_dst)
-    segments = [src, oam_dst] + segments[::-1]
-    ct_segments = ct.c_ubyte * 16 * len(segments)
+    segments = [src, oam_dst]
+    ct_segments = ct.c_ubyte * 16 * 2
 
-    class SRH_OAM_RD(ct.Structure):
+    class SRH_OAM_REQ(ct.Structure):
         _fields_ =  [ ("nh", ct.c_uint8),
                       ("hdr_len", ct.c_uint8),
                       ("type", ct.c_uint8),
@@ -103,57 +105,93 @@ def send_oam_probe(src, dst, target, segments):
                       ("flags", ct.c_ubyte),
                       ("tag", ct.c_ushort),
                       ("segments", ct_segments),
-                      ("tlv_type", ct.c_uint8),
-                      ("tlv_len", ct.c_uint8),
-                      ("oam_type", ct.c_uint8),
-                      ("oam_reserved", ct.c_uint8),
-                      ("oam_sessid", ct.c_ushort),
-                      ("oam_reserved2", ct.c_ushort),
-                      ("oam_target", ct.c_ubyte * 16) ]
+                      ("tlv_oam_type", ct.c_uint8),
+                      ("tlv_oam_len", ct.c_uint8),
+                      ("tlv_oam_sessid", ct.c_ushort),
+                      ("tlv_oam_target", ct.c_ubyte * 16),
+                      ("tlv_pad_type", ct.c_uint8),
+                      ("tlv_pad_len", ct.c_uint8),
+                      ("tlv_pad", ct.c_ushort),
+                      ]
 
-    
-    srh = SRH_OAM_RD(type=RTHDR_TYPE, segleft=len(segments)-1, lastentry=len(segments)-1, flags=SRH_FLAG_OAM,
-                     tlv_type=TLV_OAM_TYPE, tlv_len=22, oam_type=TLV_OAM_RD)
+    srh = SRH_OAM_REQ(type=RTHDR_TYPE, segleft=len(segments)-1, lastentry=len(segments)-1, flags=SRH_FLAG_OAM,
+                     tlv_oam_type=SR6_TLV_OAM_NH_REQ, tlv_oam_len=18,
+                     tlv_pad_type=SR6_TLV_PADDING, tlv_pad_len=2, tlv_pad=0)
     srh.hdr_len = (len(bytes(srh)) >> 3) - 1
     srh.segments = ct_segments.from_buffer_copy(b''.join([socket.inet_pton(socket.AF_INET6, s) for s in segments]))
     #srh.segment2 = (ct.c_ubyte * 16).from_buffer_copy(socket.inet_pton(socket.AF_INET6, oam_dst))
-    srh.oam_target = (ct.c_ubyte * 16).from_buffer_copy(socket.inet_pton(socket.AF_INET6, target))
+    srh.tlv_oam_target = (ct.c_ubyte * 16).from_buffer_copy(socket.inet_pton(socket.AF_INET6, target))
     sessid = random.randrange(0, 65535)
-    srh.sessid = sessid    
-    payload = struct.pack('!HBB', sessid, 0, 0)
+    srh.tlv_oam_sessid = sessid
 
-    icmp.send(src, segments[0], ICMP_OAM_REQ, 0, payload, srh=bytes(srh))
-    return sessid
-
-def send_udp_probe(src, target, hops):
     sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-    sock.bind((src, 0))
-    sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_UNICAST_HOPS, hops)
-    sock.sendto(b"", (target, TRACERT_PORT))
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVTIMEO, TIMEOUT)
+    sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_RTHDR, bytes(srh))
+    sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_RECVRTHDR, 1)
+    sock.bind((src, 4242))
+    sock.sendto(b"foobar", (src, 4242))
+
+    tries = TRIES_PER_PROBE
+    while tries > 0:
+        try:
+            msg, ancdata, flags, addr = sock.recvmsg(100, 512)
+            for cmsg_level, cmsg_type, cmsg_data in ancdata:
+                if cmsg_level == socket.IPPROTO_IPV6 and cmsg_type == socket.IPV6_RTHDR:
+                    try:
+                        return parse_oam_reply(cmsg_data, sessid)
+                    except ValueError:
+                        pass
+        except socket.error as e:
+            pass
+
+        tries -= 1
     sock.close()
+    
+    #payload = struct.pack('!HBB', sessid, 0, 0)
+    #icmp.send(src, segments[0], ICMP_OAM_REQ, 0, payload, srh=bytes(srh))
+    return None
 
-#https://github.com/certator/pyping/blob/master/pyping/core.py
+def parse_oam_reply(bare_reply, req_sessid):
+    class SRH_OAM_Reply(ct.Structure):
+        _fields_ =  [ ("nh", ct.c_uint8),
+                      ("hdr_len", ct.c_uint8),
+                      ("type", ct.c_uint8),
+                      ("segleft", ct.c_uint8),
+                      ("lastentry", ct.c_uint8),
+                      ("flags", ct.c_ubyte),
+                      ("tag", ct.c_ushort),
+                      ("segments", ct.c_ubyte * 16 * 2),
+                      ("tlv_oam_type", ct.c_uint8),
+                      ("tlv_oam_len", ct.c_uint8),
+                      ("tlv_oam_sessid", ct.c_ushort),
+                      ("tlv_oam_target", ct.c_ubyte * 16),
+                      ("tlv_oam2_type", ct.c_uint8),
+                      ("tlv_oam2_len", ct.c_uint8),
+                      ("tlv_oam2_nh", ct.c_uint8),
+                      ("tlv_oam2_reserved", ct.c_uint8),
+                      # nexthops here ...
+                      ]
 
-def parse_oam_reply(reply, req_sessid):
-    if len(reply) < 6:
+    if len(bare_reply) <= ct.sizeof(SRH_OAM_Reply):
+        raise ValueError
+
+    reply = SRH_OAM_Reply.from_buffer_copy(bare_reply)
+    if reply.tlv_oam_sessid != req_sessid:
+        raise ValueError
+
+    if reply.tlv_oam2_type != SR6_TLV_OAM_NH_REPLY:
+        raise ValueError
+
+    if len(bare_reply) < ct.sizeof(SRH_OAM_Reply) + 16 * reply.tlv_oam2_nh:
+        raise ValueError
+
+    if reply.tlv_oam2_nh == 0:
         return []
-    type, code, checksum, sessid, nb_sub, _ = struct.unpack('!BBHHBB', reply[0:8])
 
-    if req_sessid != sessid: # received a reply we were not waiting on
-        print("Received OAM reply with other session ID.")
-        return []
-
-    if nb_sub < 1:
-        print("Received OAM reply without sub-replies.")
-        return []
-
-    nb_hops = reply[10] # we expect only one sub-reply
-    if len(reply) != 12 + (nb_hops * 16):
-        print("Received invalid OAM reply.")
-        return []
-
-    hops = [reply[12+i*16:28+i*16] for i in range(nb_hops)]
-    return list(map(lambda x: Node(NodeType.IPV6, socket.inet_ntop(socket.AF_INET6, x)), hops))
+    hops = bare_reply[ct.sizeof(SRH_OAM_Reply):ct.sizeof(SRH_OAM_Reply) + 16 * reply.tlv_oam2_nh]
+    hops = [hops[x:x+16] for x in range(0, len(hops), 16)]
+    hops = list(map(lambda x: Node(NodeType.IPV6, socket.inet_ntop(socket.AF_INET6, x)), hops))
+    return hops
 
 def new_recv_icmp_sock(allowed=None):
     rcv_icmp = socket.socket(socket.AF_INET6, socket.SOCK_RAW, socket.IPPROTO_ICMPV6)
@@ -177,29 +215,15 @@ def segtrace(src, target):
 
     while not paths.empty(): # unfinished paths
         path = paths.get()
-        nexthops = []
+        nexthops = None
         segments = [n.addr for n in path if n.type != NodeType.UNKNOWN]
 
-        # Sending SRv6 OAM DR probes
+        # Sending SRv6 OAM probes
         if len(path) > 0 and path[-1].type != NodeType.UNKNOWN:
-            tries = TRIES_PER_PROBE
-            sock = new_recv_icmp_sock(allowed=(ICMP_OAM_REQ,))
-            try:
-                sessid = send_oam_probe(src, path[-1].addr, target, segments)
-            except OSError as e:
-                tries = 0
+            nexthops = send_oam_probe(src, path[-1].addr, target)
+            if nexthops != None:
+                path[-1].type = NodeType.SEG6
                 
-            while not nexthops and tries > 0:
-                try:
-                    reply, replier = sock.recvfrom(512)
-                    nexthops = parse_oam_reply(reply, sessid)
-                    path[-1].type = NodeType.SEG6
-                except socket.error as e:
-                    pass
-
-                tries -= 1
-            sock.close()
-
         # If the next hops are still not discovered, sending ICMP Echo Request probes
         tries = TRIES_PER_PROBE
         sock = new_recv_icmp_sock(allowed=(1,3,129))
