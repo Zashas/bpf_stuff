@@ -47,6 +47,7 @@ struct oob_request {
 int End_OTP(struct __sk_buff *skb) {
 	// first thing, fetch the monotonic timestamp, since we do not want the
 	// following operations to be included in the delay measurement
+	bpf_trace_printk("foo\n");
 	uint64_t timestamp = bpf_ktime_get_ns();
 
 	struct ip6_srh_t *srh = seg6_get_srh(skb);
@@ -84,10 +85,12 @@ int End_OTP(struct __sk_buff *skb) {
 	uint32_t *clk_diff_sec = clock_diff.lookup(&id);
 	id++;
 	uint32_t *clk_diff_ns = clock_diff.lookup(&id);
+
 	if (!clk_diff_sec || !clk_diff_ns) {
 		tlv.cc = 0x1C; // TODO
 		goto send;
 	}
+
 	uint32_t ts_sec = (uint32_t) (bpf_ktime_get_ns() / 1000000000);
 	uint32_t ts_ns = (uint32_t) (bpf_ktime_get_ns() % 1000000000);
 	ts_ns += *clk_diff_ns;

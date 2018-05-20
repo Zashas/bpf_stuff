@@ -163,6 +163,7 @@ def log_traceback(func):
     return f
 
 def exec_cmd(cmd, log=False):
+    return 0
     ret = subprocess.run(cmd, stderr=subprocess.PIPE)
     if ret.returncode:
         stderr = ret.stderr.decode('ascii').strip()

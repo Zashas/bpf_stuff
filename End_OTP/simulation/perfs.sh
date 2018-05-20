@@ -18,7 +18,7 @@ cleanup()
 set -e
 trap cleanup 0 2 3 6 9
 
-#gcc measures/inject_dm.c -o inject_dm
+gcc measures/inject_dm.c -o inject_dm
 
 ip netns add ns1
 ip netns add ns2
