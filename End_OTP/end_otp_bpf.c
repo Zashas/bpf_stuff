@@ -1,4 +1,3 @@
-#include "proto.h"
 #include "libseg6.c"
 
 #define SR6_TLV_DM 7
@@ -47,13 +46,10 @@ struct oob_request {
 int End_OTP(struct __sk_buff *skb) {
 	// first thing, fetch the monotonic timestamp, since we do not want the
 	// following operations to be included in the delay measurement
-	bpf_trace_printk("foo\n");
-	uint64_t timestamp = bpf_ktime_get_ns();
 
 	struct ip6_srh_t *srh = seg6_get_srh(skb);
 	if (!srh)
 		return BPF_DROP;
-
 
 	struct sr6_tlv_dm_t tlv;
 	int cursor = seg6_find_tlv(skb, srh, SR6_TLV_DM, sizeof(tlv));
@@ -81,7 +77,7 @@ int End_OTP(struct __sk_buff *skb) {
 	tlv.flags |= 8; // DM TLV becomes a response
 	tlv.rtf = 3;
 
-	int id = 0;
+	/*int id = 0;
 	uint32_t *clk_diff_sec = clock_diff.lookup(&id);
 	id++;
 	uint32_t *clk_diff_ns = clock_diff.lookup(&id);
@@ -98,15 +94,17 @@ int End_OTP(struct __sk_buff *skb) {
 		ts_sec += 1;
 		ts_ns = ts_ns - 1000000000;
 	}
-	ts_sec += *clk_diff_sec;
-	tlv.timestamps[1].tv_sec = bpf_htonl(ts_sec);
-	tlv.timestamps[1].tv_nsec = bpf_htonl(ts_ns);
+	ts_sec += *clk_diff_sec;*/
+
+	uint64_t rx_tstamp = bpf_skb_get_tstamp(skb);
+	tlv.timestamps[1].tv_sec = bpf_htonl((uint32_t) (rx_tstamp / 1000000000));
+	tlv.timestamps[1].tv_nsec = bpf_htonl((uint32_t) (rx_tstamp % 1000000000));
+
 	if (query_cc == 0x00) { // in case of a two-way delay measurement
-		tlv.timestamps[2].tv_sec = tlv.timestamps[1].tv_sec;
-		tlv.timestamps[2].tv_nsec = tlv.timestamps[1].tv_nsec;
-	} // this is a BPF limitation, we can not obtain two different HW timestamps
-
-
+		uint64_t tx_tstamp = bpf_ktime_get_real_ns();
+		tlv.timestamps[2].tv_sec = bpf_htonl((uint32_t) (tx_tstamp / 1000000000));
+		tlv.timestamps[2].tv_nsec = bpf_htonl((uint32_t) (tx_tstamp % 1000000000));
+	}
 
 send:
 	if (query_cc == 0x00) { // in-band

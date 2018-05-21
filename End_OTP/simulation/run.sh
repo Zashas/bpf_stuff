@@ -9,16 +9,16 @@ cleanup()
 	fi
 
 	set +e
-	#rm inject_dm
 	ip netns del ns1 2> /dev/null
 	ip netns del ns2 2> /dev/null
 	pkill -F /tmp/end_otp_fb00::3-128.pid
+	rm inject_dm
 }
 
 set -e
 trap cleanup 0 2 3 6 9
 
-gcc measures/inject_dm.c -o inject_dm
+gcc simulation/inject_dm.c -o inject_dm
 
 ip netns add ns1
 ip netns add ns2
@@ -50,11 +50,11 @@ ip netns exec ns1 ip -6 route add fb00::2 via fb00::21 dev veth1
 ip netns exec ns2 ip -6 route add fb00::1 via fb00::12 dev veth2
 
 # needed so fb00::1 and fb00::2 both have the other MAC address in cache
-# otherwise the first measurement is flawed
+# otherwise the first measure is flawed
 ip netns exec ns1 ping -I fb00::1 fb00::2 -c 1 > /dev/null
 
 read -p "Press enter to start measuring"
-ip netns exec ns1 bash -c "measures/recv.py &"
+ip netns exec ns1 bash -c "simulation/recv.py &"
 sleep 1
 for i in {0..4}
   do

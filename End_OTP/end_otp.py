@@ -2,18 +2,27 @@
 
 from bcc import BPF
 from pyroute2 import IPRoute
-import sys, logging, signal, socket, os
+import sys, logging, signal, socket, os, struct
 from daemonize import Daemonize
 import ctypes as ct
 from time import sleep
 
-PID = "/tmp/end_otp_{}.pid"
-PERF_EVENT_FREQ = 0
-sid, iface = None, None
-dir_path = os.path.dirname(os.path.realpath(__file__))
-nstime = ct.cdll.LoadLibrary(os.path.join(dir_path, 'libnstime.so'))
+socket.SO_TIMESTAMPING = 37
+socket.SOF_TIMESTAMPING_RX_SOFTWARE = (1<<3)
+socket.SOF_TIMESTAMPING_SOFTWARE = (1<<4)
 
-REQ_DUMP_ROUTES = 0
+dir_path = os.path.dirname(os.path.realpath(__file__))
+PID = "/tmp/end_otp_{}.pid"
+sid, iface = None, None
+
+# For RX software timestamping to be done in kernel, at least on socket with
+# SOF_TIMESTAMPING_RX_SOFTWARE must be created (even without a bind or connect).
+def open_rx_tstamp_sock():
+    sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+    flags = socket.SOF_TIMESTAMPING_SOFTWARE | socket.SOF_TIMESTAMPING_RX_SOFTWARE
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_TIMESTAMPING, struct.pack('I', 24))
+
+    return sock
 
 def handle_oob_request(cpu, data, size):
     class OOBRequest(ct.Structure):
@@ -42,7 +51,6 @@ def install_rt(bpf_file):
 
     fds = []
     fds.append(b["oob_dm_requests"].map_fd)
-    fds.append(b["clock_diff"].map_fd)
 
     ipr = IPRoute()
     idx = ipr.link_lookup(ifname=iface)[0]
@@ -61,8 +69,8 @@ def remove_rt(sig, fr):
 def run_daemon(bpf):
     signal.signal(signal.SIGTERM, remove_rt)
     signal.signal(signal.SIGINT, remove_rt)
-    bpf["clock_diff"][0] = ct.c_ulong(nstime.mono_real_diff_sec())
-    bpf["clock_diff"][1] = ct.c_ulong(nstime.mono_real_diff_ns())
+    sock = open_rx_tstamp_sock() # keep a local variable here, otherwise Python's GC will close the sock
+
     bpf["oob_dm_requests"].open_perf_buffer(handle_oob_request)
 
     while 1:
