@@ -15,7 +15,6 @@ LEN_DELAYS_BUFF = 1 # number of previous delay values included for the link comp
 PROBES_TTL = 50
 
 prefix, L1, L2, sid_otp_down, sid_otp_down_bytes, sid_otp_up, sid_otp_up_bytes, logger = [None] * 8
-probes_sender = None
 
 class DaemonShutdown(Exception):
     pass
@@ -259,9 +258,8 @@ def handle_dm_reply(cpu, data, size):
 def update_tc_delays(batch_id, batch):
     Link.last_batch_completed = batch_id
 
-    logger.info("New batch")
     for dm in batch:
-        logger.info("{}: DOWN={} UP={}".format(dm.link.sid_up, dm.delay_down - dm.tc_delays[0], dm.delay_up - dm.tc_delays[1]))
+        logger.debug("{}: DOWN={} UP={}".format(dm.link.sid_up, dm.delay_down - dm.tc_delays[0], dm.delay_up - dm.tc_delays[1]))
         dm.link.add_delays(dm.delay_down - dm.tc_delays[0], dm.delay_up - dm.tc_delays[1])
 
     delays_L1 = L1.get_avg_delays()
@@ -275,8 +273,8 @@ def update_tc_delays(batch_id, batch):
             compensations[1][i] = delays_L1[i] - delays_L2[i]
         #logger.info("new delay on {}: {} = {} & {}".format(link_slow.sid_up, diff_delay, delay1, delay2))
 
-    logger.info("New compensation matrix: {}".format(repr(compensations)))
-    logger.info('')
+    logger.debug("New compensation matrix: {}".format(repr(compensations)))
+    logger.debug('')
     L1.set_tc_delays(*compensations[0])
     L2.set_tc_delays(*compensations[1])
 
@@ -323,9 +321,9 @@ def run_daemon(bpf_aggreg, bpf_dm):
             bpf_dm.kprobe_poll()
 
     except DaemonShutdown:
-        kill_daemon()
+        kill_daemon(probes_sender)
 
-def kill_daemon():
+def kill_daemon(probes_sender):
     probes_sender.shutdown_flag.set()
     L1.remove_tc() # TODO fail
     L2.remove_tc()
