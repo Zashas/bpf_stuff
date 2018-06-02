@@ -1,9 +1,9 @@
+#include <linux/seg6_local.h>
 #include "libseg6.c"
 
 #define SR6_TLV_DM 7
 #define SR6_TLV_URO 131
 
-BPF_ARRAY(clock_diff, u32, 2);
 BPF_PERF_OUTPUT(oob_dm_requests);
 
 struct timestamp_ieee1588_v2 {
@@ -44,9 +44,7 @@ struct oob_request {
 };
 
 int End_OTP(struct __sk_buff *skb) {
-	// first thing, fetch the monotonic timestamp, since we do not want the
-	// following operations to be included in the delay measurement
-
+	bpf_trace_printk("got pkt\n");
 	struct ip6_srh_t *srh = seg6_get_srh(skb);
 	if (!srh)
 		return BPF_DROP;
@@ -77,25 +75,6 @@ int End_OTP(struct __sk_buff *skb) {
 	tlv.flags |= 8; // DM TLV becomes a response
 	tlv.rtf = 3;
 
-	/*int id = 0;
-	uint32_t *clk_diff_sec = clock_diff.lookup(&id);
-	id++;
-	uint32_t *clk_diff_ns = clock_diff.lookup(&id);
-
-	if (!clk_diff_sec || !clk_diff_ns) {
-		tlv.cc = 0x1C; // TODO
-		goto send;
-	}
-
-	uint32_t ts_sec = (uint32_t) (bpf_ktime_get_ns() / 1000000000);
-	uint32_t ts_ns = (uint32_t) (bpf_ktime_get_ns() % 1000000000);
-	ts_ns += *clk_diff_ns;
-	if (ts_ns > 1000000000) {
-		ts_sec += 1;
-		ts_ns = ts_ns - 1000000000;
-	}
-	ts_sec += *clk_diff_sec;*/
-
 	uint64_t rx_tstamp = bpf_skb_get_tstamp(skb);
 	tlv.timestamps[1].tv_sec = bpf_htonl((uint32_t) (rx_tstamp / 1000000000));
 	tlv.timestamps[1].tv_nsec = bpf_htonl((uint32_t) (rx_tstamp % 1000000000));
@@ -123,8 +102,15 @@ send:
 		if (bpf_skb_load_bytes(skb, cursor, &req.uro, sizeof(req.uro)) < 0)
 			return BPF_DROP;
 
+		bpf_trace_printk("sent usp\n");
 		oob_dm_requests.perf_submit_skb(skb, skb->len, &req, sizeof(req));
-		return BPF_DROP;
+
+		int table = 254;
+		int err = bpf_lwt_seg6_action(skb, SEG6_LOCAL_ACTION_END_DT6, (void *)&table, sizeof(table));
+		if (err)
+			return BPF_DROP;
+
+		return BPF_REDIRECT;
 	} else {
 		return BPF_DROP;
 	}

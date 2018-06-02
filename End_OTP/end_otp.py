@@ -33,6 +33,7 @@ def handle_oob_request(cpu, data, size):
                       ("uro_daddr", ct.c_ubyte * 16),
                       ("skb", ct.c_ubyte * (size - ct.sizeof(ct.c_ubyte * 68))) ]
 
+    logger.info("got req");
     req = ct.cast(data, ct.POINTER(OOBRequest)).contents
     uro_port = socket.ntohs(req.uro_dport)
     uro_ip = socket.inet_ntop(socket.AF_INET6, bytes(req.uro_daddr))

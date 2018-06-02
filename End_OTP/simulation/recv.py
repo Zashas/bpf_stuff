@@ -13,11 +13,7 @@ class Timestamp:
     def __sub__(self, other):
         return self.val - other.val
 
-def exit():
-    print("ERROR: no response received")
-    sys.exit(1)
-
-UDP_IP = "fb00::1"
+UDP_IP = "fb00::3"
 UDP_PORT = 9000
 
 sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)

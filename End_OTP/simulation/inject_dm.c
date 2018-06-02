@@ -121,6 +121,7 @@ int send_dm(const char *bindaddr, const char *dst, short port, int nb_segments, 
     tlv_pad->type = 4;
     tlv_pad->len = 2;
 
+    printf("%d\n", tot_len);
     err = setsockopt(fd, IPPROTO_IPV6, IPV6_RTHDR, srh, (socklen_t) tot_len);
     if (err < 0) {
         perror("setsockopt");
