@@ -30,8 +30,6 @@ int SEG6_OAM(struct __sk_buff *skb) {
 	struct ip6_srh_t *srh = seg6_get_srh(skb);
 	if (!srh)
 		return BPF_DROP;
-	if (!(srh->flags & SR6_FLAG_OAM)) // if no OAM flag, let the packet simply go on
-		return BPF_OK;
 
 	struct ip6_t *ip = (void *)(long)skb->data;
 	if ((void *)ip + sizeof(*ip) > (void *)(long)skb->data_end)
@@ -61,12 +59,12 @@ int SEG6_OAM(struct __sk_buff *skb) {
 
 		struct ip6_addr_t *addr = &tlv_reply.nexthops[i];
 		// check if addr is in fe80::/10
-		if ((bpf_htonll(addr->hi) >> 56) == 0xfe &&
-		    !((((bpf_htonll(addr->hi) >> 54) & 3) ^ 2))) {
+		/*if ((bpf_htonll(addr->hi) >> 56) == 0xfe &&
+		    !((((bpf_htonll(addr->hi) >> 54) & 3) ^ 2))) {*/
 			struct ip6_addr_t *gaddr = link_local_table.lookup(addr);
 			if (gaddr != NULL)
 				*addr = *gaddr;
-		}
+		//}
 	}
 
 	ret = seg6_add_tlv(skb, srh, -1, (struct sr6_tlv_t *)&tlv_reply, tlv_reply.len + 2);

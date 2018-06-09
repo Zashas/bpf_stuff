@@ -11,11 +11,13 @@ SR6_TLV_OAM_NH_REPLY = 101
 SR6_TLV_PADDING = 4
 SRH_FLAG_OAM = 32
 TLV_OAM_RD = 1
-TRIES_PER_PROBE = 1
+TRIES_PER_PROBE = 3
 
 # Build the GNU timeval struct (seconds, microseconds)
-TIMEOUT = struct.pack("ll", 3, 0)
+TIMEOUT = struct.pack("ll", 1, 0)
 MAX_HOPS = 8
+
+nb_sends = 0
 
 class NodeType(enum.Enum):
     UNKNOWN = 0
@@ -129,7 +131,13 @@ def send_oam_probe(src, dst, target):
     sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_RTHDR, bytes(srh))
     sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_RECVRTHDR, 1)
     sock.bind((src, 4242))
-    sock.sendto(b"foobar", (src, 4242))
+
+    global nb_sends
+    try:
+        sock.sendto(b"foobar", (src, 4242))
+        nb_sends += 1
+    except OSError:
+        return None
 
     tries = TRIES_PER_PROBE
     while tries > 0:
@@ -207,6 +215,18 @@ def new_recv_icmp_sock(allowed=None):
         rcv_icmp.setsockopt(socket.IPPROTO_ICMPV6, 1, bytes(icmp6_filter))
 
     return rcv_icmp
+
+def send_udp_probe(src, dst, hops, srh, sport):
+    sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_UNICAST_HOPS, hops)
+    if srh:
+        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_RTHDR, srh)
+
+    sock.bind((src, sport))
+    sock.sendto(b"foo", (dst, 33434))
+    global nb_sends
+    nb_sends += 1
+    sock.close()
     
 def segtrace(src, target):
     paths = queue.Queue()
@@ -215,29 +235,38 @@ def segtrace(src, target):
 
     while not paths.empty(): # unfinished paths
         path = paths.get()
-        nexthops = None
+        nexthops = []
         segments = [n.addr for n in path if n.type != NodeType.UNKNOWN]
 
         # Sending SRv6 OAM probes
         if len(path) > 0 and path[-1].type != NodeType.UNKNOWN:
-            nexthops = send_oam_probe(src, path[-1].addr, target)
-            if nexthops != None:
+            ecmp_hops = send_oam_probe(src, path[-1].addr, target)
+            if ecmp_hops != None:
                 path[-1].type = NodeType.SEG6
+                nexthops = ecmp_hops
                 
-        # If the next hops are still not discovered, sending ICMP Echo Request probes
-        tries = TRIES_PER_PROBE
-        sock = new_recv_icmp_sock(allowed=(1,3,129))
-        while not nexthops and tries > 0:
-            icmp.send(src, target, ICMP_ECHO_REQ, 0, b"\x42\x42\x00\x01", hops=len(path) + 1, \
-                      srh=build_srh(target, segments) if segments else None)
+        # If the next hops are still not discovered, sending UDP probes
+        if not nexthops:
+            tries = TRIES_PER_PROBE
+        else:
+            tries = 0
+
+        sock_recv= new_recv_icmp_sock(allowed=(1,3,129))
+        while tries > 0:
+            send_udp_probe(src, target, len(path) + 1, \
+                    build_srh(target, segments) if segments else None, 33434 + TRIES_PER_PROBE - tries) 
+            #icmp.send(src, target, ICMP_ECHO_REQ, 0, b"\x42\x42\x00\x01", hops=len(path) + 1, \
+            #          srh=build_srh(target, segments) if segments else None)
             try:
-                reply, replier = sock.recvfrom(512)
-                nexthops = [Node(NodeType.IPV6, replier[0])]
+                reply, replier = sock_recv.recvfrom(512)
+                new_nh = Node(NodeType.IPV6, replier[0])
+                if new_nh not in nexthops:
+                    nexthops.append(new_nh)
             except socket.error as e:
                 pass
 
             tries -= 1
-        sock.close()
+        sock_recv.close()
 
         if not nexthops: # if still no data, we put it as unknown and keep going
             nexthops = [Node(NodeType.UNKNOWN)]
@@ -249,9 +278,14 @@ def segtrace(src, target):
             else:
                 paths.put(new_path)
 
+    l = None
     for p in final_paths:
-        print("\n -> ".join(map(str, p)))
-        print("")
+        if l != None and l != len(p):
+            print("FAIL !")
+        l = len(p)
+    #    print("\n -> ".join(map(str, p)))
+    #    print("")
+    print("{},{},{},{},{}".format(_src,_dst,len(final_paths),nb_sends,l))
 
 if __name__ == "__main__":
     src,dst = None, None

@@ -119,25 +119,28 @@ ip netns exec ns5 ip -6 route add fc00::1:0000 dev veth7b via fe80::35a
 ip netns exec ns6 ip -6 route add fc00::1:0000 dev veth8b via fe80::36a
 ip netns exec ns8 ip -6 route add fc00::1:0000 dev veth9b via fe80::58a
 
+ip netns exec ns2 ip -6 route
+
 #ip netns exec ns1 sysctl net.ipv6.conf.lo.seg6_enabled=1 > /dev/null
 #ip netns exec ns1 sysctl net.ipv6.conf.veth1a.seg6_enabled=1 > /dev/null
 
 sleep 2
 
 # "unit tests": making sure fc00::1:0000 can communicate with all other nodes
-for i in {1..10}
+for i in {2..10}
 do
-    ip netns exec ns1 ping -I fc00::1:0000 fc00::${i}:0000 -c 1 > /dev/null
+    echo "ip netns exec ns1 ping -I fc00::1:0000 fc00::${i}:0000 -c 1 > /dev/null"
+    #ip netns exec ns1 ping -6 -I fc00::1:0000 fc00::${i}:0000 -c 1
 done
 echo "Network launched!"
 
 #ip netns exec ns1 traceroute -6 -q 10 -s fc00::1:0000 fc00::10:0000
 #ip netns exec ns1 ping -I fc00::1:0000 fc00::2:0008 -c 1
-#ip netns exec ns1 traceroute -6 -s fc00::1:0000 fc00::10:0000
+ip netns exec ns1 traceroute -6 -s fc00::1:0000 fc00::10:0000
 
 ip netns exec ns1 tcpdump -i veth1a -w segtrace.pcap &
-ip netns exec ns2 ./oam_ecmp.py fc00::2:0008/128 veth1b
-ip netns exec ns3 ./oam_ecmp.py fc00::3:0008/128 veth6b
+#ip netns exec ns2 ./oam_ecmp.py fc00::2:0008/128 veth1b
+#ip netns exec ns3 ./oam_ecmp.py fc00::3:0008/128 veth6b
 
 ip netns exec ns1 ./segtrace.py fc00::1:0000 fc00::10:0000
 
